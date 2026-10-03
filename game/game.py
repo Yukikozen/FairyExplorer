@@ -4720,6 +4720,10 @@ class Obstacle:
 
         self.kind = kind
         self.style = style
+        # For fairy houses, this identifies the NPC who lives here.
+        # It is intentionally stored on the house itself so the visible
+        # owner label always follows the correct house after repositioning.
+        self.owner = None
 
     def draw(self, screen, camera):
 
@@ -4765,8 +4769,8 @@ class Obstacle:
             )
 
             # Main trunk: dark rear side first.
-            trunk_w = 28
-            trunk_h = 66
+            trunk_w = 34
+            trunk_h = 78
             trunk = pygame.Rect(
                 rect.centerx - trunk_w // 2,
                 rect.bottom - trunk_h,
@@ -4873,10 +4877,10 @@ class Obstacle:
 
             # Canopy rear shadow: large dark volume.
             canopy_shadow = pygame.Rect(
-                rect.left - 16,
-                rect.top - 18,
-                rect.width + 32,
-                82
+                rect.left - 24,
+                rect.top - 30,
+                rect.width + 48,
+                104
             )
             pygame.draw.ellipse(
                 screen,
@@ -4886,10 +4890,10 @@ class Obstacle:
 
             # Main canopy volume.
             canopy = pygame.Rect(
-                rect.left - 14,
-                rect.top - 22,
-                rect.width + 28,
-                82
+                rect.left - 22,
+                rect.top - 34,
+                rect.width + 44,
+                104
             )
             pygame.draw.ellipse(
                 screen,
@@ -4899,10 +4903,10 @@ class Obstacle:
 
             # Lower darker foliage gives the canopy a rounded underside.
             lower = pygame.Rect(
-                rect.left - 8,
-                rect.top + 16,
-                rect.width + 16,
-                51
+                rect.left - 12,
+                rect.top + 10,
+                rect.width + 24,
+                62
             )
             pygame.draw.ellipse(
                 screen,
@@ -4912,11 +4916,11 @@ class Obstacle:
 
             # Individual overlapping foliage masses create depth.
             foliage_layers = [
-                (rect.left + 3, rect.top + 13, 38, 38, (89, 171, 91)),
-                (rect.left + 25, rect.top - 2, 46, 45, (108, 188, 101)),
-                (rect.centerx - 23, rect.top - 14, 50, 48, (101, 181, 94)),
-                (rect.right - 55, rect.top + 2, 47, 44, (79, 158, 81)),
-                (rect.right - 34, rect.top + 18, 40, 39, (62, 137, 70)),
+                (rect.left - 2, rect.top + 10, 48, 50, (82, 163, 84)),
+                (rect.left + 17, rect.top - 18, 58, 56, (108, 188, 101)),
+                (rect.centerx - 29, rect.top - 29, 62, 60, (101, 181, 94)),
+                (rect.right - 61, rect.top - 14, 59, 56, (79, 158, 81)),
+                (rect.right - 43, rect.top + 12, 50, 49, (62, 137, 70)),
             ]
 
             for fx, fy, fw, fh, color in foliage_layers:
@@ -5104,32 +5108,48 @@ class Obstacle:
                 gx=rect.centerx+dx
                 pygame.draw.ellipse(screen,(126,137,128),(gx-8,rect.bottom-5,16,8))
 
+            # --------------------------------------------------------
+            # FAIRY HOUSE OWNER LABEL
+            # --------------------------------------------------------
+            # Keep this label attached to the actual house object. This
+            # makes it impossible for the displayed owner to get separated
+            # from a house if its world position changes.
+            if self.owner:
+                label = f"{self.owner}'s House"
+                font = pygame.font.SysFont("arial", 16, bold=True)
+                label_surface = font.render(label, True, (255, 255, 255))
+                label_rect = label_surface.get_rect(
+                    center=(rect.centerx, rect.top - 42)
+                )
+                bg = label_rect.inflate(18, 8)
+                pygame.draw.rect(
+                    screen, (67, 49, 84), bg, border_radius=9
+                )
+                pygame.draw.rect(
+                    screen, (255, 224, 137), bg, 2, border_radius=9
+                )
+                screen.blit(label_surface, label_rect)
+
         elif self.kind == "fence":
 
-            pygame.draw.rect(
-                screen,
-                (170, 120, 75),
-                rect,
-                border_radius=3
-            )
+            # Chunky isometric-style fence: rear shadow, thick rails,
+            # highlighted front faces and dark side faces give each post
+            # actual depth instead of a flat rectangle.
+            shadow = pygame.Rect(rect.left - 2, rect.bottom - 2, rect.width + 8, 12)
+            pygame.draw.ellipse(screen, (58, 78, 58), shadow)
 
-            for x in range(
-                rect.left + 10,
-                rect.right,
-                35
-            ):
+            rail_back = pygame.Rect(rect.left, rect.top + 5, rect.width, max(8, rect.height - 4))
+            pygame.draw.rect(screen, (108, 70, 42), rail_back, border_radius=5)
+            pygame.draw.rect(screen, (184, 127, 70), rect.inflate(0, -4), border_radius=4)
+            pygame.draw.line(screen, (232, 178, 103), (rect.left + 3, rect.top + 2), (rect.right - 3, rect.top + 2), 3)
 
-                pygame.draw.rect(
-                    screen,
-                    (195, 145, 90),
-                    (
-                        x,
-                        rect.top - 8,
-                        10,
-                        rect.height + 16
-                    ),
-                    border_radius=3
-                )
+            for x in range(rect.left + 10, rect.right, 35):
+                post = pygame.Rect(x, rect.top - 14, 14, rect.height + 28)
+                pygame.draw.rect(screen, (91, 57, 37), post.move(5, 4), border_radius=4)
+                pygame.draw.rect(screen, (180, 119, 66), post, border_radius=4)
+                pygame.draw.polygon(screen, (119, 75, 43), [(post.right-5, post.top+2), (post.right+5, post.top+7), (post.right+5, post.bottom-4), (post.right-5, post.bottom)])
+                pygame.draw.line(screen, (235, 181, 104), (post.left+3, post.top+4), (post.left+3, post.bottom-5), 3)
+                pygame.draw.polygon(screen, (201, 144, 81), [(post.left-2, post.top), (post.centerx, post.top-6), (post.right+2, post.top), (post.centerx, post.top+6)])
 
 
 # ================================================================
@@ -5692,246 +5712,152 @@ class PartyFairy(Fairy):
 
 class FairyNPC(Fairy):
 
-    def __init__(
-        self,
-        name,
-        image_filename,
-        x,
-        y,
-        dialogue,
-        wander_radius=200
-    ):
-
-        super().__init__(
-            name,
-            image_filename,
-            x,
-            y
-        )
-
+    def __init__(self, name, image_filename, x, y, dialogue, wander_radius=200):
+        super().__init__(name, image_filename, x, y)
         self.spawn_x = float(x)
         self.spawn_y = float(y)
-
         self.dialogue = dialogue
         self.dialogue_index = 0
-
         self.is_talking = False
-
         self.wander_radius = wander_radius
-
         self.target_x = self.x
         self.target_y = self.y
-
-        self.speed = random.uniform(
-            NPC_MIN_SPEED,
-            NPC_MAX_SPEED
-        )
-
-        self.wait_timer = random.uniform(
-            0,
-            2
-        )
-
+        self.speed = random.uniform(1.6, 2.4)
+        self.wait_timer = random.uniform(0.2, 1.0)
+        self.stuck_timer = 0.0
         self.quest_ids = []
-
         self.choose_new_destination()
 
-    def choose_new_destination(self):
+    def _fairy_rect(self, x, y):
+        # Match the visible 64x78 sprite, with a small safety margin.
+        return pygame.Rect(int(x) - 8, int(y) - 6, 60, 74)
 
-        angle = random.uniform(
-            0,
-            math.pi * 2
-        )
+    def _obstacle_visual_rect(self, obstacle):
+        r = obstacle.rect
+        if obstacle.kind == "tree":
+            # Actual tree artwork extends about 7 px outside the 70x90 base.
+            return pygame.Rect(r.left - 10, r.top - 20, r.width + 20, r.height + 28)
+        if obstacle.kind == "fence":
+            return r.inflate(16, 20)
+        if obstacle.kind == "house":
+            return r.inflate(24, 24)
+        if obstacle.kind == "rock":
+            return r.inflate(12, 12)
+        return r.inflate(12, 12)
 
-        radius = random.uniform(
-            50,
-            self.wander_radius
-        )
-
-        self.target_x = clamp(
-            self.spawn_x
-            + math.cos(angle) * radius,
-            50,
-            WORLD_WIDTH - 100
-        )
-
-        self.target_y = clamp(
-            self.spawn_y
-            + math.sin(angle) * radius,
-            50,
-            WORLD_HEIGHT - 100
-        )
-
-    def can_move_to(
-        self,
-        new_x,
-        new_y,
-        obstacles
-    ):
-
-        test_rect = pygame.Rect(
-            int(new_x),
-            int(new_y),
-            self.rect.width,
-            self.rect.height
-        )
-
+    def can_move_to(self, new_x, new_y, obstacles):
+        test = self._fairy_rect(new_x, new_y)
         for obstacle in obstacles:
-
-            if test_rect.colliderect(
-                obstacle.rect.inflate(
-                    8,
-                    8
-                )
-            ):
-
+            if test.colliderect(self._obstacle_visual_rect(obstacle)):
                 return False
-
         return True
 
-    def update(
-        self,
-        dt,
-        obstacles
-    ):
+    def choose_new_destination(self, obstacles=None):
+        # Prefer nearby destinations so NPCs visibly wander instead of
+        # repeatedly trying to cross the whole obstacle field.
+        bases = [(self.x, self.y), (self.spawn_x, self.spawn_y)]
+        if obstacles is not None:
+            for base_x, base_y in bases:
+                for radius in range(60, int(self.wander_radius) + 1, 30):
+                    for _ in range(18):
+                        angle = random.uniform(0, math.tau)
+                        tx = clamp(base_x + math.cos(angle) * radius, 80, WORLD_WIDTH - 100)
+                        ty = clamp(base_y + math.sin(angle) * radius, 80, WORLD_HEIGHT - 100)
+                        if self.can_move_to(tx, ty, obstacles):
+                            self.target_x, self.target_y = tx, ty
+                            return
+        else:
+            angle = random.uniform(0, math.tau)
+            radius = random.uniform(60, self.wander_radius)
+            self.target_x = clamp(self.spawn_x + math.cos(angle) * radius, 80, WORLD_WIDTH - 100)
+            self.target_y = clamp(self.spawn_y + math.sin(angle) * radius, 80, WORLD_HEIGHT - 100)
 
+        # Last resort: a short random step from the current position.
+        for radius in (25, 35, 45):
+            for angle_deg in range(0, 360, 30):
+                angle = math.radians(angle_deg)
+                tx = clamp(self.x + math.cos(angle) * radius, 80, WORLD_WIDTH - 100)
+                ty = clamp(self.y + math.sin(angle) * radius, 80, WORLD_HEIGHT - 100)
+                if obstacles is None or self.can_move_to(tx, ty, obstacles):
+                    self.target_x, self.target_y = tx, ty
+                    return
+        self.target_x, self.target_y = self.x, self.y
+
+    def update(self, dt, obstacles):
         if self.is_talking:
             return
 
-        self.wait_timer -= (
-            dt / 1000.0
-        )
-
+        seconds = max(0.001, dt / 1000.0)
+        self.wait_timer -= seconds
         if self.wait_timer > 0:
             return
 
         dx = self.target_x - self.x
         dy = self.target_y - self.y
-
-        dist = math.hypot(
-            dx,
-            dy
-        )
+        dist = math.hypot(dx, dy)
 
         if dist < 10:
-
-            self.wait_timer = random.uniform(
-                1,
-                3
-            )
-
-            self.choose_new_destination()
-
+            self.wait_timer = random.uniform(0.15, 0.7)
+            self.stuck_timer = 0
+            self.choose_new_destination(obstacles)
+            self.sync_rect()
             return
 
         dx /= dist
         dy /= dist
+        step = min(2.8, max(1.0, self.speed * dt / 16.67))
 
-        step = (
-            self.speed
-            * dt
-            / 16.67
-        )
+        # Try many directions. This makes the NPC slide around trees rather
+        # than repeatedly choosing a blocked target and appearing frozen.
+        directions = [
+            (dx, dy), (dx, 0), (0, dy),
+            (-dy, dx), (dy, -dx),
+            (-dx, dy), (dx, -dy),
+        ]
+        # Add small angle offsets around the desired direction.
+        desired_angle = math.atan2(dy, dx)
+        for offset in (-0.45, 0.45, -0.9, 0.9, -1.35, 1.35, math.pi):
+            directions.append((math.cos(desired_angle + offset), math.sin(desired_angle + offset)))
 
-        new_x = self.x + dx * step
-        new_y = self.y + dy * step
+        moved = False
+        for mx, my in directions:
+            length = math.hypot(mx, my)
+            if length == 0:
+                continue
+            mx, my = mx / length, my / length
+            nx = self.x + mx * step
+            ny = self.y + my * step
+            if self.can_move_to(nx, ny, obstacles):
+                self.x, self.y = nx, ny
+                moved = True
+                break
 
-        if self.can_move_to(
-            new_x,
-            self.y,
-            obstacles
-        ):
-
-            self.x = new_x
-
+        if moved:
+            self.stuck_timer = 0.0
         else:
+            self.stuck_timer += seconds
 
-            self.choose_new_destination()
-
-        if self.can_move_to(
-            self.x,
-            new_y,
-            obstacles
-        ):
-
-            self.y = new_y
+        # If blocked for more than a fraction of a second, immediately pick
+        # a destination from the current position and try again next frame.
+        if self.stuck_timer > 0.35:
+            self.choose_new_destination(obstacles)
+            self.stuck_timer = 0.0
+            self.wait_timer = 0.0
 
         self.sync_rect()
 
-    def draw(
-        self,
-        screen,
-        camera,
-        game
-    ):
-
-        super().draw(
-            screen,
-            camera
-        )
-
-        sx, sy = camera.world_to_screen(
-            self.x,
-            self.y
-        )
-
-        name_surface = game.small_font.render(
-            self.name,
-            True,
-            (255, 255, 255)
-        )
-
-        name_rect = name_surface.get_rect(
-            center=(
-                sx
-                + self.rect.width // 2,
-
-                sy - 14
-            )
-        )
-
-        bg = name_rect.inflate(
-            10,
-            5
-        )
-
-        pygame.draw.rect(
-            screen,
-            (70, 55, 90),
-            bg,
-            border_radius=8
-        )
-
-        screen.blit(
-            name_surface,
-            name_rect
-        )
-
-        marker = game.get_npc_marker(
-            self
-        )
-
+    def draw(self, screen, camera, game):
+        super().draw(screen, camera)
+        sx, sy = camera.world_to_screen(self.x, self.y)
+        name_surface = game.small_font.render(self.name, True, (255, 255, 255))
+        name_rect = name_surface.get_rect(center=(sx + self.rect.width // 2, sy - 14))
+        pygame.draw.rect(screen, (70, 55, 90), name_rect.inflate(10, 5), border_radius=8)
+        screen.blit(name_surface, name_rect)
+        marker = game.get_npc_marker(self)
         if marker:
-
-            marker_surface = game.title_font.render(
-                marker,
-                True,
-                (255, 230, 100)
-            )
-
-            marker_rect = marker_surface.get_rect(
-                center=(
-                    sx
-                    + self.rect.width // 2,
-
-                    sy - 48
-                )
-            )
-
-            screen.blit(
-                marker_surface,
-                marker_rect
-            )
+            marker_surface = game.title_font.render(marker, True, (255, 230, 100))
+            marker_rect = marker_surface.get_rect(center=(sx + self.rect.width // 2, sy - 48))
+            screen.blit(marker_surface, marker_rect)
 
 
 # ================================================================
@@ -6164,18 +6090,21 @@ class Game:
         # based on an enlarged reservation rectangle rather than just the
         # trunk collision box.
         placed_tree_reservations = []
-        for _ in range(100):
+        for _ in range(75):
             placed = False
 
-            for _attempt in range(100):
-                x = random.randint(100, WORLD_WIDTH - 170)
-                y = random.randint(120, WORLD_HEIGHT - 180)
+            for _attempt in range(180):
+                x = random.randint(130, WORLD_WIDTH - 190)
+                y = random.randint(150, WORLD_HEIGHT - 200)
 
-                tree_rect = pygame.Rect(x, y, 70, 90)
-                reserved = tree_rect.inflate(115, 105)
+                # The collision box is the trunk/base. The reservation is
+                # intentionally much larger because the 3D canopy, branches
+                # and ground shadow extend beyond the trunk.
+                tree_rect = pygame.Rect(x, y, 78, 104)
+                reserved = tree_rect.inflate(175, 165)
 
                 # Keep the visible 3D canopy away from fences.
-                if any(reserved.colliderect(fr.inflate(35, 35)) for fr in fence_rects):
+                if any(reserved.colliderect(fr.inflate(55, 55)) for fr in fence_rects):
                     continue
 
                 # Keep neighboring trees separated so their canopies and
@@ -6187,7 +6116,7 @@ class Game:
                 if reserved.colliderect(pygame.Rect(150, 150, 260, 220)):
                     continue
 
-                self.obstacles.append(Obstacle(x, y, 70, 90, "tree"))
+                self.obstacles.append(Obstacle(x, y, 78, 104, "tree"))
                 placed_tree_reservations.append(reserved)
                 placed = True
                 break
@@ -6210,6 +6139,14 @@ class Game:
         # larger than its collision rectangle, so we reserve extra space
         # around every house to keep nearby trees from visually overlapping it.
         placed_houses = []
+
+        house_owners = {
+            "mushroom": "Lumi",
+            "flower": "Pipi",
+            "crystal": "Coco",
+            "treehouse": "Ruru",
+            "pond": "Nana",
+        }
 
         for original_x, original_y, style in houses:
             house_w = 170
@@ -6271,6 +6208,7 @@ class Game:
                 "house",
                 style
             )
+            house.owner = house_owners.get(style, "Fairy")
             self.obstacles.append(house)
             placed_houses.append(house.rect.copy())
 
@@ -6570,6 +6508,29 @@ class Game:
                 240
             )
         ]
+
+        # Ensure every fairy starts completely outside the visual footprint
+        # of trees, fences and houses. If a fixed NPC spawn is too close,
+        # move it to the nearest safe point around its original location.
+        for npc in self.npcs:
+            if not npc.can_move_to(npc.x, npc.y, self.obstacles):
+                found = False
+                for radius in (50, 80, 110, 140, 180, 220):
+                    for angle_deg in range(0, 360, 15):
+                        angle = math.radians(angle_deg)
+                        nx = clamp(npc.spawn_x + math.cos(angle) * radius, 100, WORLD_WIDTH - 130)
+                        ny = clamp(npc.spawn_y + math.sin(angle) * radius, 100, WORLD_HEIGHT - 130)
+                        if npc.can_move_to(nx, ny, self.obstacles):
+                            npc.x = nx
+                            npc.y = ny
+                            npc.sync_rect()
+                            npc.spawn_x = nx
+                            npc.spawn_y = ny
+                            npc.choose_new_destination(self.obstacles)
+                            found = True
+                            break
+                    if found:
+                        break
 
     # ============================================================
     # QUEST CREATION
