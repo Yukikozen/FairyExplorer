@@ -1,15 +1,15 @@
 {
   "version": 1,
   "selected_character": "Mepple",
-  "coins": 150,
-  "game_time_ms": 51460.0,
+  "coins": 0,
+  "game_time_ms": 14559.0,
   "player": {
-    "x": 877.0395385192878,
-    "y": 2138.5037508062237
+    "x": 2120.3473298326176,
+    "y": 1271.7645019878182
   },
   "companion": {
-    "x": 939.3068777337465,
-    "y": 2061.451746450537
+    "x": 2024.4177938315986,
+    "y": 1292.1520297424065
   },
   "flowers": [
     false,
@@ -194,13 +194,13 @@
     false
   ],
   "quest_items": [
-    true,
-    true,
-    true,
-    true,
-    true,
-    true,
-    true,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
     false,
     false,
     false,
@@ -210,33 +210,28 @@
   "npcs": [
     {
       "name": "Lumi",
-      "x": 2616.8569943051825,
-      "y": 1516.7309704202614,
-      "friendship": 0
+      "x": 2219.26051001365,
+      "y": 1236.2582973791975
     },
     {
       "name": "Pipi",
-      "x": 927.7132633372543,
-      "y": 925.3830088396764,
-      "friendship": 38
+      "x": 1210.9092878249407,
+      "y": 456.44720726561496
     },
     {
       "name": "Coco",
-      "x": 1315.357945683041,
-      "y": 1822.831537407379,
-      "friendship": 21
+      "x": 1325.158091122808,
+      "y": 1464.6686478163163
     },
     {
       "name": "Ruru",
-      "x": 3337.387803606401,
-      "y": 498.01067507155443,
-      "friendship": 0
+      "x": 3175.479492439477,
+      "y": 1154.597334008318
     },
     {
       "name": "Nana",
-      "x": 1244.7767338299434,
-      "y": 2462.2446266009188,
-      "friendship": 0
+      "x": 1014.8539163082833,
+      "y": 2669.730927090377
     }
   ],
   "quests": [
@@ -266,32 +261,32 @@
     },
     {
       "quest_id": "pipi_001",
-      "progress": 3,
+      "progress": 0,
       "accepted": false,
-      "completed": true,
-      "reward_claimed": true,
+      "completed": false,
+      "reward_claimed": false,
       "visited_targets": []
     },
     {
       "quest_id": "pipi_002",
-      "progress": 1,
+      "progress": 0,
       "accepted": false,
-      "completed": true,
-      "reward_claimed": true,
+      "completed": false,
+      "reward_claimed": false,
       "visited_targets": []
     },
     {
       "quest_id": "coco_001",
-      "progress": 4,
+      "progress": 0,
       "accepted": false,
-      "completed": true,
-      "reward_claimed": true,
+      "completed": false,
+      "reward_claimed": false,
       "visited_targets": []
     },
     {
       "quest_id": "coco_002",
       "progress": 0,
-      "accepted": true,
+      "accepted": false,
       "completed": false,
       "reward_claimed": false,
       "visited_targets": []
@@ -330,7 +325,7 @@
     }
   ],
   "navigator": {
-    "enabled": true,
-    "quest_id": "coco_002"
+    "enabled": false,
+    "quest_id": null
   }
 }

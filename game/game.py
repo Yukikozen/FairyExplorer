@@ -1,5 +1,6 @@
 import os
 import math
+import heapq
 import random
 import json
 import pygame
@@ -5745,45 +5746,30 @@ class FairyNPC(Fairy):
         self.home_reached = False
         self.home_target_x = self.x
         self.home_target_y = self.y
-
-        # Non-romantic friendship relationship with the player.
-        self.friendship = 0
-        self.friendship_max = 100
-
+        self.path = []
+        self.path_index = 0
+        self.path_rebuild_timer = 0.0
         self.choose_new_destination()
 
-    def add_friendship(self, amount):
-        old_level = self.get_friendship_level()
-        self.friendship = int(clamp(self.friendship + amount, 0, self.friendship_max))
-        return old_level, self.get_friendship_level()
-
-    def get_friendship_level(self):
-        if self.friendship >= 80:
-            return "Best Friends"
-        if self.friendship >= 60:
-            return "Close Friends"
-        if self.friendship >= 40:
-            return "Good Friends"
-        if self.friendship >= 20:
-            return "Friends"
-        return "Acquaintances"
-
     def _fairy_rect(self, x, y):
-        # Match the visible 64x78 sprite, with a small safety margin.
-        return pygame.Rect(int(x) - 8, int(y) - 6, 60, 74)
+        # Use the actual collision size of the fairy instead of the full
+        # transparent 64x78 image.  The old oversized hitbox made narrow
+        # paths around trees/fences impossible.
+        return pygame.Rect(int(x), int(y), 44, 60).inflate(4, 4)
 
     def _obstacle_visual_rect(self, obstacle):
         r = obstacle.rect
         if obstacle.kind == "tree":
-            # Actual tree artwork extends about 7 px outside the 70x90 base.
-            return pygame.Rect(r.left - 10, r.top - 20, r.width + 20, r.height + 28)
+            # Keep a small art-clearance margin without making trees
+            # artificially huge collision walls.
+            return r.inflate(8, 12)
         if obstacle.kind == "fence":
-            return r.inflate(16, 20)
+            return r.inflate(8, 10)
         if obstacle.kind == "house":
-            return r.inflate(24, 24)
+            return r.inflate(16, 16)
         if obstacle.kind == "rock":
-            return r.inflate(12, 12)
-        return r.inflate(12, 12)
+            return r.inflate(8, 8)
+        return r.inflate(8, 8)
 
     def can_move_to(self, new_x, new_y, obstacles):
         test = self._fairy_rect(new_x, new_y)
@@ -5792,36 +5778,153 @@ class FairyNPC(Fairy):
                 return False
         return True
 
-    def choose_new_destination(self, obstacles=None):
-        # Prefer nearby destinations so NPCs visibly wander instead of
-        # repeatedly trying to cross the whole obstacle field.
-        bases = [(self.x, self.y)]
-        if obstacles is not None:
-            for base_x, base_y in bases:
-                for radius in range(150, int(self.wander_radius) + 1, 50):
-                    for _ in range(18):
-                        angle = random.uniform(0, math.tau)
-                        tx = clamp(base_x + math.cos(angle) * radius, 80, WORLD_WIDTH - 100)
-                        ty = clamp(base_y + math.sin(angle) * radius, 80, WORLD_HEIGHT - 100)
-                        if self.can_move_to(tx, ty, obstacles):
-                            self.target_x, self.target_y = tx, ty
-                            return
-        else:
-            angle = random.uniform(0, math.tau)
-            radius = random.uniform(60, self.wander_radius)
-            self.target_x = clamp(self.spawn_x + math.cos(angle) * radius, 80, WORLD_WIDTH - 100)
-            self.target_y = clamp(self.spawn_y + math.sin(angle) * radius, 80, WORLD_HEIGHT - 100)
+    def _build_path(self, tx, ty, obstacles):
+        """Build a small A* path so NPCs can actually walk around obstacles."""
+        grid = 35
+        cols = max(1, WORLD_WIDTH // grid)
+        rows = max(1, WORLD_HEIGHT // grid)
 
-        # Last resort: a short random step from the current position.
-        for radius in (25, 35, 45):
-            for angle_deg in range(0, 360, 30):
+        def node_at(x, y):
+            return (int(clamp(x // grid, 0, cols - 1)), int(clamp(y // grid, 0, rows - 1)))
+
+        def center(node):
+            gx, gy = node
+            return gx * grid + grid // 2, gy * grid + grid // 2
+
+        start = node_at(self.x, self.y)
+        goal = node_at(tx, ty)
+
+        # Find the nearest walkable goal cell if the requested point is just
+        # beside an obstacle.
+        def walkable(node):
+            x, y = center(node)
+            return self.can_move_to(x, y, obstacles)
+
+        if not walkable(goal):
+            candidates = []
+            for radius in range(1, 5):
+                for dx in range(-radius, radius + 1):
+                    for dy in range(-radius, radius + 1):
+                        n = (goal[0] + dx, goal[1] + dy)
+                        if 0 <= n[0] < cols and 0 <= n[1] < rows and walkable(n):
+                            candidates.append(n)
+                if candidates:
+                    goal = min(candidates, key=lambda n: abs(n[0]-goal[0]) + abs(n[1]-goal[1]))
+                    break
+
+        # NPCs can occasionally end up with their hitbox touching a fence
+        # corner after a map transition or an earlier collision.  If the
+        # current cell is blocked, find the nearest genuinely walkable cell
+        # before running A*.  This prevents the "start node is blocked" loop.
+        if not walkable(start):
+            safe_start = None
+            for radius in range(1, 9):
+                candidates = []
+                for dx in range(-radius, radius + 1):
+                    for dy in range(-radius, radius + 1):
+                        if abs(dx) != radius and abs(dy) != radius:
+                            continue
+                        n = (start[0] + dx, start[1] + dy)
+                        if 0 <= n[0] < cols and 0 <= n[1] < rows and walkable(n):
+                            candidates.append(n)
+                if candidates:
+                    safe_start = min(candidates, key=lambda n: abs(n[0]-start[0]) + abs(n[1]-start[1]))
+                    break
+            if safe_start is not None:
+                sx, sy = center(safe_start)
+                self.x, self.y = float(sx), float(sy)
+                self.sync_rect()
+                start = safe_start
+            else:
+                self.path = []
+                self.path_index = 0
+                return False
+
+        if not walkable(goal):
+            self.path = []
+            self.path_index = 0
+            return False
+
+        open_heap = []
+        heapq.heappush(open_heap, (0, start))
+        came_from = {}
+        g_score = {start: 0}
+        visited = set()
+        neighbors = [
+            (-1, 0), (1, 0), (0, -1), (0, 1),
+            (-1, -1), (-1, 1), (1, -1), (1, 1)
+        ]
+
+        while open_heap:
+            _, current = heapq.heappop(open_heap)
+            if current in visited:
+                continue
+            visited.add(current)
+            if current == goal:
+                path = []
+                while current != start:
+                    path.append(center(current))
+                    current = came_from[current]
+                path.reverse()
+                # Do not make the fairy stop exactly at the first grid center.
+                self.path = path
+                self.path_index = 0
+                return
+
+            for dx, dy in neighbors:
+                nxt = (current[0] + dx, current[1] + dy)
+                if not (0 <= nxt[0] < cols and 0 <= nxt[1] < rows):
+                    continue
+                if not walkable(nxt):
+                    continue
+                # Prevent diagonal corner-cutting through two obstacles.
+                if dx and dy:
+                    if not walkable((current[0] + dx, current[1])) or not walkable((current[0], current[1] + dy)):
+                        continue
+                step_cost = 1.414 if dx and dy else 1.0
+                tentative = g_score[current] + step_cost
+                if tentative < g_score.get(nxt, float('inf')):
+                    came_from[nxt] = current
+                    g_score[nxt] = tentative
+                    h = math.hypot(goal[0] - nxt[0], goal[1] - nxt[1])
+                    heapq.heappush(open_heap, (tentative + h, nxt))
+
+        self.path = []
+        self.path_index = 0
+
+    def _set_target(self, x, y, obstacles):
+        self.target_x = float(x)
+        self.target_y = float(y)
+        return self._build_path(self.target_x, self.target_y, obstacles)
+
+    def choose_new_destination(self, obstacles=None):
+        # Pick a destination and immediately calculate a route around trees,
+        # houses, fences and rocks instead of trying to walk through them.
+        for _ in range(80):
+            angle = random.uniform(0, math.tau)
+            radius = random.uniform(self.wander_min_distance, self.wander_radius)
+            tx = clamp(self.x + math.cos(angle) * radius, 80, WORLD_WIDTH - 100)
+            ty = clamp(self.y + math.sin(angle) * radius, 80, WORLD_HEIGHT - 100)
+            if obstacles is None or self.can_move_to(tx, ty, obstacles):
+                self.target_x, self.target_y = tx, ty
+                self.path = []
+                self.path_index = 0
+                return
+
+        # Guaranteed short escape search.
+        for radius in (40, 70, 100, 140, 180):
+            for angle_deg in range(0, 360, 20):
                 angle = math.radians(angle_deg)
                 tx = clamp(self.x + math.cos(angle) * radius, 80, WORLD_WIDTH - 100)
                 ty = clamp(self.y + math.sin(angle) * radius, 80, WORLD_HEIGHT - 100)
                 if obstacles is None or self.can_move_to(tx, ty, obstacles):
                     self.target_x, self.target_y = tx, ty
+                    self.path = []
+                    self.path_index = 0
                     return
         self.target_x, self.target_y = self.x, self.y
+        self.path = []
+        self.path_index = 0
 
     def set_home(self, house):
         self.house = house
@@ -5839,35 +5942,192 @@ class FairyNPC(Fairy):
             if self.house is not None:
                 self.home_target_x = float(self.house.rect.centerx - self.rect.width // 2)
                 self.home_target_y = float(self.house.rect.bottom + 18)
+                self.path = []
+                self.path_index = 0
         elif not night and self.is_home:
             self.is_home = False
             self.home_reached = False
             self.choose_new_destination(obstacles)
 
-    def _move_toward(self, tx, ty, dt, obstacles):
-        dx = tx - self.x
-        dy = ty - self.y
-        dist = math.hypot(dx, dy)
-        if dist < 12:
-            return True
-        dx /= dist
-        dy /= dist
-        step = min(2.8, max(1.0, self.speed * dt / 16.67))
-        directions = [(dx, dy), (dx, 0), (0, dy), (-dy, dx), (dy, -dx)]
-        desired_angle = math.atan2(dy, dx)
-        for offset in (-0.45, 0.45, -0.9, 0.9, -1.35, 1.35, math.pi):
-            directions.append((math.cos(desired_angle + offset), math.sin(desired_angle + offset)))
-        for mx, my in directions:
-            length = math.hypot(mx, my)
-            if length == 0:
+    def _build_local_path(self, tx, ty, obstacles):
+        """Build a small local A* route only when an NPC needs one.
+
+        This replaces the old whole-4000x3000-world search.  The search is
+        limited to the area between the NPC and destination, so it is fast
+        enough to use for several wandering fairies.
+        """
+        grid = 35
+        margin = 210
+        left = int(clamp(min(self.x, tx) - margin, 0, WORLD_WIDTH - grid))
+        top = int(clamp(min(self.y, ty) - margin, 0, WORLD_HEIGHT - grid))
+        right = int(clamp(max(self.x, tx) + margin, grid, WORLD_WIDTH))
+        bottom = int(clamp(max(self.y, ty) + margin, grid, WORLD_HEIGHT))
+
+        cols = max(1, min(55, (right - left) // grid + 1))
+        rows = max(1, min(55, (bottom - top) // grid + 1))
+
+        def node_at(x, y):
+            return (
+                int(clamp((x - left) // grid, 0, cols - 1)),
+                int(clamp((y - top) // grid, 0, rows - 1)),
+            )
+
+        def center(node):
+            gx, gy = node
+            return left + gx * grid + grid // 2, top + gy * grid + grid // 2
+
+        def walkable(node):
+            x, y = center(node)
+            return self.can_move_to(x, y, obstacles)
+
+        start = node_at(self.x, self.y)
+        goal = node_at(tx, ty)
+
+        # If the exact goal cell is blocked, choose the closest free cell.
+        if not walkable(goal):
+            candidates = []
+            for radius in range(1, 5):
+                for gx in range(max(0, goal[0]-radius), min(cols, goal[0]+radius+1)):
+                    for gy in range(max(0, goal[1]-radius), min(rows, goal[1]+radius+1)):
+                        n = (gx, gy)
+                        if walkable(n):
+                            candidates.append(n)
+                if candidates:
+                    goal = min(candidates, key=lambda n: abs(n[0]-goal[0]) + abs(n[1]-goal[1]))
+                    break
+
+        if not walkable(start) or not walkable(goal):
+            self.path = []
+            self.path_index = 0
+            return False
+
+        open_heap = [(0.0, start)]
+        came_from = {}
+        g_score = {start: 0.0}
+        visited = set()
+        neighbors = [
+            (-1, 0), (1, 0), (0, -1), (0, 1),
+            (-1, -1), (-1, 1), (1, -1), (1, 1),
+        ]
+
+        while open_heap:
+            _, current = heapq.heappop(open_heap)
+            if current in visited:
                 continue
-            mx, my = mx / length, my / length
-            nx, ny = self.x + mx * step, self.y + my * step
+            visited.add(current)
+            if current == goal:
+                path = []
+                while current != start:
+                    path.append(center(current))
+                    current = came_from[current]
+                path.reverse()
+                self.path = path
+                self.path_index = 0
+                return True
+
+            for ox, oy in neighbors:
+                nxt = (current[0] + ox, current[1] + oy)
+                if not (0 <= nxt[0] < cols and 0 <= nxt[1] < rows):
+                    continue
+                if not walkable(nxt):
+                    continue
+                if ox and oy:
+                    if not walkable((current[0] + ox, current[1])) or not walkable((current[0], current[1] + oy)):
+                        continue
+                cost = 1.414 if ox and oy else 1.0
+                tentative = g_score[current] + cost
+                if tentative < g_score.get(nxt, float('inf')):
+                    came_from[nxt] = current
+                    g_score[nxt] = tentative
+                    h = math.hypot(goal[0] - nxt[0], goal[1] - nxt[1])
+                    heapq.heappush(open_heap, (tentative + h, nxt))
+
+        self.path = []
+        self.path_index = 0
+        return False
+
+    def _move_toward(self, tx, ty, dt, obstacles):
+        dist = math.hypot(tx - self.x, ty - self.y)
+        if dist < 12:
+            self.stuck_timer = 0.0
+            return True
+
+        # Build a local route once per destination, then simply follow it.
+        if not self.path or self.path_index >= len(self.path):
+            self._build_local_path(tx, ty, obstacles)
+
+        step = max(0.9, min(3.2, self.speed * dt / 16.67))
+
+        if self.path and self.path_index < len(self.path):
+            wx, wy = self.path[self.path_index]
+            wdist = math.hypot(wx - self.x, wy - self.y)
+            if wdist < 18:
+                self.path_index += 1
+                if self.path_index >= len(self.path):
+                    self.path = []
+                    self.path_index = 0
+                    return True
+                wx, wy = self.path[self.path_index]
+
+            dx = wx - self.x
+            dy = wy - self.y
+            length = max(0.001, math.hypot(dx, dy))
+            nx = clamp(self.x + dx / length * step, 20, WORLD_WIDTH - 70)
+            ny = clamp(self.y + dy / length * step, 20, WORLD_HEIGHT - 70)
             if self.can_move_to(nx, ny, obstacles):
                 self.x, self.y = nx, ny
                 self.stuck_timer = 0.0
                 return False
+
+            # A moving obstacle or corner invalidated the route. Rebuild it.
+            self.path = []
+            self.path_index = 0
+
+        # Fallback local steering. This also handles an NPC whose target is
+        # directly reachable without needing a full route.
+        dx = tx - self.x
+        dy = ty - self.y
+        length = max(0.001, math.hypot(dx, dy))
+        ux, uy = dx / length, dy / length
+        directions = [(ux, uy), (ux, 0), (0, uy)]
+        for angle in (0.35, -0.35, 0.7, -0.7, 1.1, -1.1, 1.55, -1.55, math.pi):
+            directions.append((math.cos(math.atan2(uy, ux) + angle), math.sin(math.atan2(uy, ux) + angle)))
+
+        best = None
+        best_distance = float('inf')
+        for vx, vy in directions:
+            length2 = max(0.001, math.hypot(vx, vy))
+            nx = clamp(self.x + vx / length2 * step, 20, WORLD_WIDTH - 70)
+            ny = clamp(self.y + vy / length2 * step, 20, WORLD_HEIGHT - 70)
+            if self.can_move_to(nx, ny, obstacles):
+                d = math.hypot(tx - nx, ty - ny)
+                if d < best_distance:
+                    best_distance = d
+                    best = (nx, ny)
+
+        if best is not None:
+            self.x, self.y = best
+            self.stuck_timer = 0.0
+            return False
+
         self.stuck_timer += dt / 1000.0
+        if self.stuck_timer >= 0.5:
+            # Find the nearest free location and immediately continue roaming.
+            for radius in (25, 40, 60, 85, 115, 150):
+                for angle_deg in range(0, 360, 15):
+                    angle = math.radians(angle_deg)
+                    nx = clamp(self.x + math.cos(angle) * radius, 20, WORLD_WIDTH - 70)
+                    ny = clamp(self.y + math.sin(angle) * radius, 20, WORLD_HEIGHT - 70)
+                    if self.can_move_to(nx, ny, obstacles):
+                        self.x, self.y = nx, ny
+                        self.path = []
+                        self.path_index = 0
+                        self.stuck_timer = 0.0
+                        self.choose_new_destination(obstacles)
+                        return False
+            self.stuck_timer = 0.0
+            self.choose_new_destination(obstacles)
+
         return False
 
     def update(self, dt, obstacles, game_time_hour=None):
@@ -6106,9 +6366,6 @@ class Game:
 
         # Quest details screen.
         self.selected_quest = None
-
-        # Relationship menu.
-        self.relationship_scroll = 0
 
         # --------------------------------------------------------
         # Notification
@@ -7400,7 +7657,7 @@ class Game:
             "companion": ({"x": self.companion.x, "y": self.companion.y} if self.companion else None),
             "flowers": [bool(f.collected) for f in self.flowers],
             "quest_items": [bool(i.collected) for i in self.quest_items],
-            "npcs": [{"name": n.name, "x": n.x, "y": n.y, "friendship": n.friendship} for n in self.npcs],
+            "npcs": [{"name": n.name, "x": n.x, "y": n.y} for n in self.npcs],
             "quests": [{"quest_id": q.quest_id, "progress": q.progress, "accepted": q.accepted, "completed": q.completed, "reward_claimed": q.reward_claimed, "visited_targets": list(q.visited_targets)} for q in self.quests],
             "navigator": {"enabled": self.navigator_enabled, "quest_id": self.navigator_quest_id}
         }
@@ -7461,7 +7718,6 @@ class Game:
                 npc = npc_by_name.get(saved.get("name"))
                 if npc:
                     npc.x = float(saved.get("x", npc.x)); npc.y = float(saved.get("y", npc.y)); npc.sync_rect(); npc.target_x = npc.x; npc.target_y = npc.y
-                    npc.friendship = int(clamp(saved.get("friendship", 0), 0, npc.friendship_max))
 
             quest_by_id = {q.quest_id: q for q in self.quests}
             for saved in data.get("quests", []):
@@ -7491,49 +7747,9 @@ class Game:
             return False
 
     def start_new_adventure(self, character):
-        # START ADVENTURE is a completely fresh game. Do not reuse any
-        # runtime progress from the previous adventure, and remove the
-        # previous save so CONTINUE cannot load the old adventure.
-        self.obstacles = []
-        self.flowers = []
-        self.quest_items = []
-        self.quest_locations = []
-        self.npcs = []
-        self.quests = []
-
-        self.coins = 0
-        self.game_time_ms = (8 * 60 / 24) * GAME_DAY_LENGTH_MS
-        self.selected_character = None
-
-        self.navigator_enabled = False
-        self.navigator_quest_id = None
-        self.navigator_quest_index = 0
-        self.selected_quest = None
-
-        self.dialogue_npc = None
-        self.dialogue_lines = []
-        self.dialogue_index = 0
-        self.pending_quest = None
-        self.quest_offer_ready = False
-
-        # Reset quest tabs/scroll position.
-        self.quest_tab = 0
-        self.quest_scroll = [0, 0, 0, 0]
-
-        # Build a brand-new world and brand-new NPC objects. Their
-        # friendship values therefore start at 0 again.
-        self.generate_world()
-        self.create_quests()
-
-        # This game uses one save slot. Starting a new adventure replaces
-        # the old save slot so CONTINUE can never restore the previous run.
-        try:
-            if self.save_manager.has_save():
-                os.remove(self.save_manager.path)
-                print("[SAVE] Old save removed for new adventure.")
-        except OSError as exc:
-            print(f"[SAVE] Could not remove old save: {exc}")
-
+        self.obstacles = []; self.flowers = []; self.quest_items = []; self.quest_locations = []; self.npcs = []; self.quests = []
+        self.generate_world(); self.create_quests()
+        self.coins = 0; self.navigator_enabled = False; self.navigator_quest_id = None; self.navigator_quest_index = 0
         self.start_adventure(character)
 
     def start_adventure(
@@ -7699,45 +7915,6 @@ class Game:
                         self.start_adventure(
                             "Mipple"
                         )
-
-            return
-
-        # ========================================================
-        # RELATIONSHIPS
-        # ========================================================
-
-        if self.state == "relationships":
-
-            if event.type == pygame.KEYDOWN:
-
-                if event.key in (pygame.K_r, pygame.K_ESCAPE):
-                    self.state = "playing"
-                    return
-
-                elif event.key == pygame.K_UP:
-                    self.relationship_scroll = max(0, self.relationship_scroll - 70)
-                    return
-
-                elif event.key == pygame.K_DOWN:
-                    self.relationship_scroll += 70
-                    return
-
-                elif event.key == pygame.K_HOME:
-                    self.relationship_scroll = 0
-                    return
-
-                elif event.key == pygame.K_END:
-                    self.relationship_scroll = 999999
-                    return
-
-            elif event.type == pygame.MOUSEWHEEL:
-                self.relationship_scroll = max(0, self.relationship_scroll - event.y * 60)
-                return
-
-            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                if self.get_relationship_back_rect().collidepoint(event.pos):
-                    self.state = "playing"
-                    return
 
             return
 
@@ -7926,10 +8103,6 @@ class Game:
 
                     self.open_quest_log()
 
-                elif event.key == pygame.K_r:
-
-                    self.open_relationships()
-
                 elif event.key == pygame.K_n:
 
                     self.toggle_navigator()
@@ -7950,8 +8123,6 @@ class Game:
                     self.state = "playing"
                 elif event.key == pygame.K_s:
                     self.save_game()
-                elif event.key == pygame.K_r:
-                    self.open_relationships()
                 elif event.key == pygame.K_m:
                     self.save_game()
                     self.state = "main_menu"
@@ -7962,8 +8133,6 @@ class Game:
                     self.state = "playing"
                 elif self.get_pause_save_rect().collidepoint(event.pos):
                     self.save_game()
-                elif self.get_pause_relationships_rect().collidepoint(event.pos):
-                    self.open_relationships(from_pause=True)
                 elif self.get_pause_menu_rect().collidepoint(event.pos):
                     self.save_game()
                     self.state = "main_menu"
@@ -8672,16 +8841,6 @@ class Game:
 
         return best_npc
 
-    def add_npc_friendship(self, npc, amount, reason=None):
-        old_level, new_level = npc.add_friendship(amount)
-        if reason:
-            self.show_notification(f"{npc.name} friendship +{amount} ({npc.friendship}/100)")
-        if new_level != old_level:
-            self.show_notification(f"{npc.name}: {new_level}!")
-
-    def get_npc_friendship_text(self, npc):
-        return f"{npc.get_friendship_level()}  {npc.friendship}/100"
-
     def interact(self):
 
         npc = self.get_nearby_npc()
@@ -8692,8 +8851,6 @@ class Game:
         self.record_talk_objectives(
             npc.name
         )
-
-        self.add_npc_friendship(npc, 2, reason="talk")
 
         quest = self.get_npc_quest(
             npc
@@ -8919,8 +9076,6 @@ class Game:
 
         quest.completed = True
         quest.accepted = False
-
-        self.add_npc_friendship(npc, 15, reason="quest")
 
         if not quest.reward_claimed:
 
@@ -9738,44 +9893,6 @@ class Game:
     # HUD
     # ============================================================
 
-    def draw_coin_icon(self, surface, center, radius=13):
-        """Draw a small magical 3D-style gold coin without needing an asset."""
-        cx, cy = center
-
-        # Soft shadow / lower rim
-        pygame.draw.circle(surface, (120, 82, 25), (cx + 1, cy + 2), radius)
-
-        # Dark gold outer rim
-        pygame.draw.circle(surface, (190, 130, 35), (cx, cy), radius)
-
-        # Main gold face
-        pygame.draw.circle(surface, (255, 205, 65), (cx, cy), radius - 2)
-
-        # Inner embossed face
-        pygame.draw.circle(surface, (255, 225, 105), (cx, cy), radius - 5)
-        pygame.draw.circle(surface, (226, 166, 48), (cx, cy), radius - 6, 1)
-
-        # Magical four-point sparkle/star in the middle
-        star = [
-            (cx, cy - 6),
-            (cx + 2, cy - 2),
-            (cx + 6, cy),
-            (cx + 2, cy + 2),
-            (cx, cy + 6),
-            (cx - 2, cy + 2),
-            (cx - 6, cy),
-            (cx - 2, cy - 2),
-        ]
-        pygame.draw.polygon(surface, (255, 245, 175), star)
-
-        # Small glossy highlight
-        pygame.draw.circle(
-            surface,
-            (255, 250, 205),
-            (cx - radius // 3, cy - radius // 3),
-            max(2, radius // 5),
-        )
-
     def draw_hud(self):
 
         if not self.player:
@@ -9817,23 +9934,17 @@ class Game:
             )
         )
 
-        # Coin icon + count
-        self.draw_coin_icon(
-            self.screen,
-            (42, 73),
-            radius=13
-        )
-
-        coin_text = self.font.render(
-            str(self.coins),
+        coins = self.font.render(
+            f"★ {self.coins} coins",
             True,
             (255, 225, 90)
         )
 
         self.screen.blit(
-            coin_text,
-            coin_text.get_rect(
-                midleft=(62, 73)
+            coins,
+            (
+                30,
+                62
             )
         )
 
@@ -9890,7 +10001,6 @@ class Game:
                 "WASD Move   "
                 "E Interact   "
                 "Q Quest Log   "
-                "R Relationships   "
                 "N Navigate   "
                 "ESC Pause"
             ),
@@ -10148,25 +10258,6 @@ class Game:
                 panel.y + 18
             )
         )
-
-        relationship = self.dialogue_npc
-        rel_label = self.small_font.render(
-            f"Friendship: {self.get_npc_friendship_text(relationship)}",
-            True,
-            (245, 220, 150)
-        )
-        rel_rect = rel_label.get_rect(
-            top=panel.y + 24,
-            right=panel.right - 25
-        )
-        self.screen.blit(rel_label, rel_rect)
-
-        bar = pygame.Rect(panel.right - 230, panel.y + 50, 205, 10)
-        pygame.draw.rect(self.screen, (35, 30, 50), bar, border_radius=5)
-        fill_width = int(bar.width * relationship.friendship / relationship.friendship_max)
-        if fill_width > 0:
-            fill = pygame.Rect(bar.x, bar.y, fill_width, bar.height)
-            pygame.draw.rect(self.screen, (255, 190, 120), fill, border_radius=5)
 
         if self.dialogue_lines:
 
@@ -10796,106 +10887,6 @@ class Game:
         )
 
     # ============================================================
-    # RELATIONSHIPS
-    # ============================================================
-
-    def open_relationships(self, from_pause=False):
-        if self.state not in ("playing", "pause"):
-            return
-        self.relationship_scroll = 0
-        self.state = "relationships"
-
-    def get_relationship_back_rect(self):
-        return pygame.Rect(SCREEN_WIDTH // 2 - 110, SCREEN_HEIGHT - 75, 220, 48)
-
-    def draw_relationships(self):
-        # Draw a soft backdrop so this feels like a proper game menu.
-        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
-        overlay.fill((25, 20, 45, 245))
-        self.screen.blit(overlay, (0, 0))
-
-        title = self.title_font.render("RELATIONSHIPS", True, (255, 235, 170))
-        self.screen.blit(title, title.get_rect(center=(SCREEN_WIDTH // 2, 55)))
-
-        subtitle = self.small_font.render(
-            "Build friendship by talking to fairies and helping with their quests",
-            True,
-            (225, 215, 240)
-        )
-        self.screen.blit(subtitle, subtitle.get_rect(center=(SCREEN_WIDTH // 2, 88)))
-
-        npcs = list(self.npcs)
-        card_w = min(860, SCREEN_WIDTH - 100)
-        card_h = 105
-        gap = 14
-        start_x = (SCREEN_WIDTH - card_w) // 2
-        start_y = 120 - self.relationship_scroll
-
-        total_height = len(npcs) * (card_h + gap) - gap
-        viewport_top = 110
-        viewport_bottom = SCREEN_HEIGHT - 100
-
-        # Clip cards to the menu viewport.
-        old_clip = self.screen.get_clip()
-        self.screen.set_clip(pygame.Rect(0, viewport_top, SCREEN_WIDTH, viewport_bottom - viewport_top))
-
-        for index, npc in enumerate(npcs):
-            y = start_y + index * (card_h + gap)
-            card = pygame.Rect(start_x, y, card_w, card_h)
-
-            bg = (65, 52, 88)
-            border = (150, 125, 185)
-            pygame.draw.rect(self.screen, bg, card, border_radius=16)
-            pygame.draw.rect(self.screen, border, card, 2, border_radius=16)
-
-            # Portrait / fairy icon.
-            portrait_rect = pygame.Rect(card.x + 14, card.y + 12, 80, 80)
-            pygame.draw.rect(self.screen, (45, 35, 65), portrait_rect, border_radius=14)
-            if getattr(npc, "image", None) is not None:
-                image = npc.image
-                image_copy = image.copy()
-                image_copy = pygame.transform.smoothscale(image_copy, (64, 64))
-                image_rect = image_copy.get_rect(center=portrait_rect.center)
-                self.screen.blit(image_copy, image_rect)
-
-            name = self.large_font.render(npc.name, True, (255, 240, 190))
-            self.screen.blit(name, (card.x + 112, card.y + 12))
-
-            level = npc.get_friendship_level()
-            level_text = self.small_font.render(level, True, (225, 210, 255))
-            self.screen.blit(level_text, (card.x + 112, card.y + 43))
-
-            # Friendship bar.
-            bar = pygame.Rect(card.x + 112, card.y + 68, card_w - 230, 14)
-            pygame.draw.rect(self.screen, (35, 28, 50), bar, border_radius=7)
-            fill_width = int(bar.width * npc.friendship / npc.friendship_max)
-            if fill_width > 0:
-                fill = pygame.Rect(bar.x, bar.y, fill_width, bar.height)
-                pygame.draw.rect(self.screen, (255, 190, 120), fill, border_radius=7)
-            pygame.draw.rect(self.screen, (180, 165, 205), bar, 1, border_radius=7)
-
-            points = self.small_font.render(
-                f"{npc.friendship} / {npc.friendship_max}",
-                True,
-                (250, 240, 255)
-            )
-            self.screen.blit(points, points.get_rect(midright=(card.right - 18, card.y + 76)))
-
-        self.screen.set_clip(old_clip)
-
-        # Scroll hint.
-        if total_height > viewport_bottom - viewport_top:
-            hint = self.tiny_font.render("↑ ↓ / Mouse Wheel to scroll", True, (190, 180, 210))
-            self.screen.blit(hint, hint.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT - 92)))
-
-        back = self.get_relationship_back_rect()
-        hovered = back.collidepoint(pygame.mouse.get_pos())
-        pygame.draw.rect(self.screen, (120, 90, 155) if hovered else (70, 55, 95), back, border_radius=12)
-        pygame.draw.rect(self.screen, (255, 225, 140) if hovered else (160, 140, 190), back, 2, border_radius=12)
-        back_text = self.font.render("BACK   [R / ESC]", True, (255, 255, 255))
-        self.screen.blit(back_text, back_text.get_rect(center=back.center))
-
-    # ============================================================
     # PAUSE
     # ============================================================
 
@@ -10905,11 +10896,8 @@ class Game:
     def get_pause_save_rect(self):
         return pygame.Rect(SCREEN_WIDTH // 2 - 210, 370, 420, 55)
 
-    def get_pause_relationships_rect(self):
-        return pygame.Rect(SCREEN_WIDTH // 2 - 210, 440, 420, 55)
-
     def get_pause_menu_rect(self):
-        return pygame.Rect(SCREEN_WIDTH // 2 - 210, 510, 420, 55)
+        return pygame.Rect(SCREEN_WIDTH // 2 - 210, 440, 420, 55)
 
     def draw_pause(self):
 
@@ -10918,7 +10906,7 @@ class Game:
         self.screen.blit(overlay, (0, 0))
         title = self.title_font.render("PAUSED", True, (255, 255, 255))
         self.screen.blit(title, title.get_rect(center=(SCREEN_WIDTH // 2, 220)))
-        buttons = [(self.get_pause_resume_rect(), "RESUME", "ESC"), (self.get_pause_save_rect(), "SAVE GAME", "S"), (self.get_pause_relationships_rect(), "RELATIONSHIPS", "R"), (self.get_pause_menu_rect(), "SAVE & MAIN MENU", "M")]
+        buttons = [(self.get_pause_resume_rect(), "RESUME", "ESC"), (self.get_pause_save_rect(), "SAVE GAME", "S"), (self.get_pause_menu_rect(), "SAVE & MAIN MENU", "M")]
         mouse_pos = pygame.mouse.get_pos()
         for rect, label, key in buttons:
             hovered = rect.collidepoint(mouse_pos)
@@ -10928,7 +10916,7 @@ class Game:
             pygame.draw.rect(self.screen, border, rect, 2, border_radius=14)
             text = self.font.render(f"{label}   [{key}]", True, (255, 255, 255))
             self.screen.blit(text, text.get_rect(center=rect.center))
-        hint = self.small_font.render("ESC Resume    S Save    R Relationships    M Save & Main Menu", True, (225, 215, 240))
+        hint = self.small_font.render("ESC Resume    S Save Game    M Save & Main Menu", True, (225, 215, 240))
         self.screen.blit(hint, hint.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT - 35)))
 
     # ============================================================
@@ -11128,11 +11116,6 @@ class Game:
         if self.state == "character_select":
 
             self.draw_character_select()
-            return
-
-        if self.state == "relationships":
-
-            self.draw_relationships()
             return
 
         if self.state == "quest_log":
