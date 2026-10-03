@@ -4738,49 +4738,232 @@ class Obstacle:
 
         if self.kind == "tree":
 
-            trunk = pygame.Rect(
-                rect.centerx - 10,
-                rect.bottom - 40,
-                20,
-                40
+            # --------------------------------------------------------
+            # 3D FAIRY TREE
+            # --------------------------------------------------------
+            # The tree is still drawn with Pygame primitives, but uses
+            # layered silhouettes, side shading, highlights, branches,
+            # a ground shadow and depth offsets so it reads as a solid
+            # 3D object instead of a flat 2D icon.
+
+            # Ground shadow / contact shadow.
+            shadow = pygame.Rect(
+                rect.left - 8,
+                rect.bottom - 13,
+                rect.width + 16,
+                25
+            )
+            pygame.draw.ellipse(
+                screen,
+                (62, 86, 65),
+                shadow
+            )
+            pygame.draw.ellipse(
+                screen,
+                (48, 72, 52),
+                shadow.inflate(-18, -8)
             )
 
+            # Main trunk: dark rear side first.
+            trunk_w = 28
+            trunk_h = 66
+            trunk = pygame.Rect(
+                rect.centerx - trunk_w // 2,
+                rect.bottom - trunk_h,
+                trunk_w,
+                trunk_h
+            )
+
+            pygame.draw.polygon(
+                screen,
+                (82, 52, 35),
+                [
+                    (trunk.left - 4, trunk.bottom),
+                    (trunk.left + 1, trunk.top + 9),
+                    (trunk.left + 7, trunk.top),
+                    (trunk.right + 5, trunk.top + 7),
+                    (trunk.right + 8, trunk.bottom),
+                ]
+            )
+
+            # Warm front face.
             pygame.draw.rect(
                 screen,
-                (125, 82, 48),
+                (139, 88, 48),
                 trunk,
-                border_radius=5
+                border_radius=6
             )
 
-            pygame.draw.circle(
+            # Bright side plane creates a rounded trunk highlight.
+            pygame.draw.polygon(
                 screen,
-                (70, 150, 80),
-                (
-                    rect.centerx,
-                    rect.top + 25
-                ),
-                42
+                (180, 116, 63),
+                [
+                    (trunk.left + 5, trunk.top + 4),
+                    (trunk.left + 12, trunk.top + 1),
+                    (trunk.left + 11, trunk.bottom - 4),
+                    (trunk.left + 4, trunk.bottom),
+                ]
             )
 
-            pygame.draw.circle(
+            # Dark bark plane on the opposite side.
+            pygame.draw.polygon(
                 screen,
-                (90, 175, 95),
-                (
-                    rect.centerx - 25,
-                    rect.top + 38
-                ),
-                30
+                (101, 61, 38),
+                [
+                    (trunk.right - 7, trunk.top + 5),
+                    (trunk.right, trunk.top + 9),
+                    (trunk.right, trunk.bottom),
+                    (trunk.right - 9, trunk.bottom - 3),
+                ]
             )
 
-            pygame.draw.circle(
+            # Roots spread over the ground, reinforcing the 3D contact.
+            pygame.draw.polygon(
                 screen,
-                (65, 140, 75),
-                (
-                    rect.centerx + 25,
-                    rect.top + 40
-                ),
-                30
+                (113, 69, 40),
+                [
+                    (trunk.left + 3, trunk.bottom - 14),
+                    (trunk.left - 19, trunk.bottom - 4),
+                    (trunk.left - 24, trunk.bottom + 4),
+                    (trunk.centerx - 2, trunk.bottom - 2),
+                ]
             )
+            pygame.draw.polygon(
+                screen,
+                (95, 57, 36),
+                [
+                    (trunk.right - 3, trunk.bottom - 14),
+                    (trunk.right + 18, trunk.bottom - 3),
+                    (trunk.right + 23, trunk.bottom + 5),
+                    (trunk.centerx + 3, trunk.bottom - 2),
+                ]
+            )
+
+            # Branches behind the canopy.
+            branch_color = (102, 63, 39)
+            branch_hi = (157, 96, 49)
+
+            pygame.draw.polygon(
+                screen,
+                branch_color,
+                [
+                    (trunk.centerx - 2, trunk.top + 24),
+                    (trunk.left - 22, trunk.top + 2),
+                    (trunk.left - 30, trunk.top + 6),
+                    (trunk.centerx - 7, trunk.top + 34),
+                ]
+            )
+            pygame.draw.polygon(
+                screen,
+                branch_color,
+                [
+                    (trunk.centerx + 3, trunk.top + 27),
+                    (trunk.right + 24, trunk.top + 1),
+                    (trunk.right + 31, trunk.top + 7),
+                    (trunk.centerx + 9, trunk.top + 37),
+                ]
+            )
+            pygame.draw.line(
+                screen, branch_hi,
+                (trunk.centerx - 2, trunk.top + 24),
+                (trunk.left - 20, trunk.top + 5),
+                4
+            )
+
+            # Canopy rear shadow: large dark volume.
+            canopy_shadow = pygame.Rect(
+                rect.left - 16,
+                rect.top - 18,
+                rect.width + 32,
+                82
+            )
+            pygame.draw.ellipse(
+                screen,
+                (47, 104, 57),
+                canopy_shadow.move(7, 11)
+            )
+
+            # Main canopy volume.
+            canopy = pygame.Rect(
+                rect.left - 14,
+                rect.top - 22,
+                rect.width + 28,
+                82
+            )
+            pygame.draw.ellipse(
+                screen,
+                (69, 145, 76),
+                canopy
+            )
+
+            # Lower darker foliage gives the canopy a rounded underside.
+            lower = pygame.Rect(
+                rect.left - 8,
+                rect.top + 16,
+                rect.width + 16,
+                51
+            )
+            pygame.draw.ellipse(
+                screen,
+                (53, 119, 62),
+                lower
+            )
+
+            # Individual overlapping foliage masses create depth.
+            foliage_layers = [
+                (rect.left + 3, rect.top + 13, 38, 38, (89, 171, 91)),
+                (rect.left + 25, rect.top - 2, 46, 45, (108, 188, 101)),
+                (rect.centerx - 23, rect.top - 14, 50, 48, (101, 181, 94)),
+                (rect.right - 55, rect.top + 2, 47, 44, (79, 158, 81)),
+                (rect.right - 34, rect.top + 18, 40, 39, (62, 137, 70)),
+            ]
+
+            for fx, fy, fw, fh, color in foliage_layers:
+                pygame.draw.ellipse(
+                    screen,
+                    color,
+                    pygame.Rect(fx, fy, fw, fh)
+                )
+
+            # Soft top highlight: a large curved patch rather than a flat
+            # circle, making the canopy appear rounded toward the light.
+            highlight = pygame.Rect(
+                rect.left + 18,
+                rect.top - 5,
+                64,
+                25
+            )
+            pygame.draw.ellipse(
+                screen,
+                (139, 207, 120),
+                highlight
+            )
+            pygame.draw.ellipse(
+                screen,
+                (169, 222, 137),
+                highlight.inflate(-15, -10)
+            )
+
+            # A few small darker leaf clusters add depth at the front.
+            for fx, fy, r in [
+                (rect.left + 16, rect.top + 43, 10),
+                (rect.centerx + 2, rect.top + 51, 12),
+                (rect.right - 14, rect.top + 42, 9),
+            ]:
+                pygame.draw.circle(screen, (48, 111, 58), (fx, fy), r)
+
+            # Tiny leaf highlights.
+            for fx, fy in [
+                (rect.left + 31, rect.top + 19),
+                (rect.centerx - 5, rect.top + 7),
+                (rect.right - 30, rect.top + 16),
+            ]:
+                pygame.draw.ellipse(
+                    screen,
+                    (186, 225, 143),
+                    pygame.Rect(fx, fy, 9, 5)
+                )
 
         elif self.kind == "rock":
 
@@ -5966,27 +6149,51 @@ class Game:
 
         random.seed(42)
 
+        # Fixed fence areas are reserved before generating trees so trees
+        # never grow through the fences.
+        fence_layout = [
+            (350, 850, 300, 20),
+            (2100, 1200, 350, 20),
+            (1200, 1900, 300, 20),
+            (2800, 1700, 300, 20),
+        ]
+        fence_rects = [pygame.Rect(x, y, w, h) for x, y, w, h in fence_layout]
+
+        # Generate trees with generous 3D clearance.  The rendered canopy
+        # extends well beyond the 70x90 collision footprint, so spacing is
+        # based on an enlarged reservation rectangle rather than just the
+        # trunk collision box.
+        placed_tree_reservations = []
         for _ in range(100):
+            placed = False
 
-            x = random.randint(
-                100,
-                WORLD_WIDTH - 150
-            )
+            for _attempt in range(100):
+                x = random.randint(100, WORLD_WIDTH - 170)
+                y = random.randint(120, WORLD_HEIGHT - 180)
 
-            y = random.randint(
-                100,
-                WORLD_HEIGHT - 150
-            )
+                tree_rect = pygame.Rect(x, y, 70, 90)
+                reserved = tree_rect.inflate(115, 105)
 
-            self.obstacles.append(
-                Obstacle(
-                    x,
-                    y,
-                    70,
-                    90,
-                    "tree"
-                )
-            )
+                # Keep the visible 3D canopy away from fences.
+                if any(reserved.colliderect(fr.inflate(35, 35)) for fr in fence_rects):
+                    continue
+
+                # Keep neighboring trees separated so their canopies and
+                # ground shadows do not visually merge.
+                if any(reserved.colliderect(other) for other in placed_tree_reservations):
+                    continue
+
+                # Keep trees away from the player starting area.
+                if reserved.colliderect(pygame.Rect(150, 150, 260, 220)):
+                    continue
+
+                self.obstacles.append(Obstacle(x, y, 70, 90, "tree"))
+                placed_tree_reservations.append(reserved)
+                placed = True
+                break
+
+            if not placed:
+                continue
 
         # Five distinct fairy homes placed around the world.
         # Each house uses the same collision footprint but a different
@@ -6076,10 +6283,20 @@ class Game:
                 y = random.randint(100, WORLD_HEIGHT - 120)
                 rock_rect = pygame.Rect(x, y, 70, 45)
 
+                # Check all existing obstacles AND the reserved fence
+                # rectangles. Fences are added to self.obstacles later, so
+                # they must be checked explicitly here as well. The extra
+                # clearance keeps the pebble artwork from touching fence posts.
                 blocked = any(
                     rock_rect.inflate(24, 24).colliderect(obstacle.rect)
                     for obstacle in self.obstacles
                 )
+
+                if not blocked:
+                    blocked = any(
+                        rock_rect.inflate(24, 24).colliderect(fence_rect.inflate(18, 18))
+                        for fence_rect in fence_rects
+                    )
 
                 if not blocked:
                     self.obstacles.append(
@@ -6087,23 +6304,12 @@ class Game:
                     )
                     break
 
-        fences = [
-            (350, 850, 300, 20),
-            (2100, 1200, 350, 20),
-            (1200, 1900, 300, 20),
-            (2800, 1700, 300, 20)
-        ]
-
-        for x, y, w, h in fences:
-
+        # Add the reserved fences after tree/house/rock placement.  Their
+        # positions were already reserved during tree generation, and houses
+        # also check against the actual obstacle list when placed.
+        for x, y, w, h in fence_layout:
             self.obstacles.append(
-                Obstacle(
-                    x,
-                    y,
-                    w,
-                    h,
-                    "fence"
-                )
+                Obstacle(x, y, w, h, "fence")
             )
 
         for i in range(180):
