@@ -14,6 +14,10 @@ NPC_MIN_SPEED = 1.0
 NPC_MAX_SPEED = 1.7
 NPC_INTERACTION_DISTANCE = 115
 FPS = 60
+# One full in-game day lasts 6 real minutes.
+GAME_DAY_LENGTH_MS = 6 * 60 * 1000
+NPC_HOME_HOUR = 20
+NPC_WAKE_HOUR = 6
 
 GAME_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_DIR = os.path.dirname(GAME_DIR)
@@ -99,6 +103,10 @@ class Camera:
 # NPC_INTERACTION_DISTANCE = 115
 
 # FPS = 60
+# One full in-game day lasts 6 real minutes.
+GAME_DAY_LENGTH_MS = 6 * 60 * 1000
+NPC_HOME_HOUR = 20
+NPC_WAKE_HOUR = 6
 
 
 # # ================================================================
@@ -1061,7 +1069,8 @@ class Camera:
 
 #         self.is_talking = False
 
-#         self.wander_radius = wander_radius
+#         self.wander_radius = max(700, wander_radius)
+#         self.wander_min_distance = 180.0
 
 #         self.target_x = self.x
 #         self.target_y = self.y
@@ -4561,6 +4570,10 @@ class Camera:
 # NPC_INTERACTION_DISTANCE = 115
 
 # FPS = 60
+# One full in-game day lasts 6 real minutes.
+GAME_DAY_LENGTH_MS = 6 * 60 * 1000
+NPC_HOME_HOUR = 20
+NPC_WAKE_HOUR = 6
 
 
 # ================================================================
@@ -5719,14 +5732,41 @@ class FairyNPC(Fairy):
         self.dialogue = dialogue
         self.dialogue_index = 0
         self.is_talking = False
-        self.wander_radius = wander_radius
+        self.wander_radius = max(700, wander_radius)
+        self.wander_min_distance = 180.0
         self.target_x = self.x
         self.target_y = self.y
         self.speed = random.uniform(1.6, 2.4)
         self.wait_timer = random.uniform(0.2, 1.0)
         self.stuck_timer = 0.0
         self.quest_ids = []
+        self.house = None
+        self.is_home = False
+        self.home_reached = False
+        self.home_target_x = self.x
+        self.home_target_y = self.y
+
+        # Non-romantic friendship relationship with the player.
+        self.friendship = 0
+        self.friendship_max = 100
+
         self.choose_new_destination()
+
+    def add_friendship(self, amount):
+        old_level = self.get_friendship_level()
+        self.friendship = int(clamp(self.friendship + amount, 0, self.friendship_max))
+        return old_level, self.get_friendship_level()
+
+    def get_friendship_level(self):
+        if self.friendship >= 80:
+            return "Best Friends"
+        if self.friendship >= 60:
+            return "Close Friends"
+        if self.friendship >= 40:
+            return "Good Friends"
+        if self.friendship >= 20:
+            return "Friends"
+        return "Acquaintances"
 
     def _fairy_rect(self, x, y):
         # Match the visible 64x78 sprite, with a small safety margin.
@@ -5755,10 +5795,10 @@ class FairyNPC(Fairy):
     def choose_new_destination(self, obstacles=None):
         # Prefer nearby destinations so NPCs visibly wander instead of
         # repeatedly trying to cross the whole obstacle field.
-        bases = [(self.x, self.y), (self.spawn_x, self.spawn_y)]
+        bases = [(self.x, self.y)]
         if obstacles is not None:
             for base_x, base_y in bases:
-                for radius in range(60, int(self.wander_radius) + 1, 30):
+                for radius in range(150, int(self.wander_radius) + 1, 50):
                     for _ in range(18):
                         angle = random.uniform(0, math.tau)
                         tx = clamp(base_x + math.cos(angle) * radius, 80, WORLD_WIDTH - 100)
@@ -5783,11 +5823,75 @@ class FairyNPC(Fairy):
                     return
         self.target_x, self.target_y = self.x, self.y
 
-    def update(self, dt, obstacles):
+    def set_home(self, house):
+        self.house = house
+        if house is not None:
+            # Stand just outside the front of the house, rather than inside
+            # the house collision rectangle.
+            self.home_target_x = float(house.rect.centerx - self.rect.width // 2)
+            self.home_target_y = float(house.rect.bottom + 18)
+
+    def update_home_state(self, game_time_hour, obstacles):
+        night = game_time_hour >= NPC_HOME_HOUR or game_time_hour < NPC_WAKE_HOUR
+        if night and not self.is_home:
+            self.is_home = True
+            self.home_reached = False
+            if self.house is not None:
+                self.home_target_x = float(self.house.rect.centerx - self.rect.width // 2)
+                self.home_target_y = float(self.house.rect.bottom + 18)
+        elif not night and self.is_home:
+            self.is_home = False
+            self.home_reached = False
+            self.choose_new_destination(obstacles)
+
+    def _move_toward(self, tx, ty, dt, obstacles):
+        dx = tx - self.x
+        dy = ty - self.y
+        dist = math.hypot(dx, dy)
+        if dist < 12:
+            return True
+        dx /= dist
+        dy /= dist
+        step = min(2.8, max(1.0, self.speed * dt / 16.67))
+        directions = [(dx, dy), (dx, 0), (0, dy), (-dy, dx), (dy, -dx)]
+        desired_angle = math.atan2(dy, dx)
+        for offset in (-0.45, 0.45, -0.9, 0.9, -1.35, 1.35, math.pi):
+            directions.append((math.cos(desired_angle + offset), math.sin(desired_angle + offset)))
+        for mx, my in directions:
+            length = math.hypot(mx, my)
+            if length == 0:
+                continue
+            mx, my = mx / length, my / length
+            nx, ny = self.x + mx * step, self.y + my * step
+            if self.can_move_to(nx, ny, obstacles):
+                self.x, self.y = nx, ny
+                self.stuck_timer = 0.0
+                return False
+        self.stuck_timer += dt / 1000.0
+        return False
+
+    def update(self, dt, obstacles, game_time_hour=None):
         if self.is_talking:
             return
 
+        if game_time_hour is not None:
+            self.update_home_state(game_time_hour, obstacles)
+
         seconds = max(0.001, dt / 1000.0)
+
+        # At night, every NPC goes to their assigned house and stays there.
+        if self.is_home:
+            if self.house is None:
+                self.is_home = False
+            else:
+                arrived = self._move_toward(self.home_target_x, self.home_target_y, dt, obstacles)
+                if arrived:
+                    self.home_reached = True
+                    self.x = self.home_target_x
+                    self.y = self.home_target_y
+                self.sync_rect()
+                return
+
         self.wait_timer -= seconds
         if self.wait_timer > 0:
             return
@@ -5795,51 +5899,18 @@ class FairyNPC(Fairy):
         dx = self.target_x - self.x
         dy = self.target_y - self.y
         dist = math.hypot(dx, dy)
-
         if dist < 10:
             self.wait_timer = random.uniform(0.15, 0.7)
-            self.stuck_timer = 0
+            self.stuck_timer = 0.0
             self.choose_new_destination(obstacles)
             self.sync_rect()
             return
 
-        dx /= dist
-        dy /= dist
-        step = min(2.8, max(1.0, self.speed * dt / 16.67))
-
-        # Try many directions. This makes the NPC slide around trees rather
-        # than repeatedly choosing a blocked target and appearing frozen.
-        directions = [
-            (dx, dy), (dx, 0), (0, dy),
-            (-dy, dx), (dy, -dx),
-            (-dx, dy), (dx, -dy),
-        ]
-        # Add small angle offsets around the desired direction.
-        desired_angle = math.atan2(dy, dx)
-        for offset in (-0.45, 0.45, -0.9, 0.9, -1.35, 1.35, math.pi):
-            directions.append((math.cos(desired_angle + offset), math.sin(desired_angle + offset)))
-
-        moved = False
-        for mx, my in directions:
-            length = math.hypot(mx, my)
-            if length == 0:
-                continue
-            mx, my = mx / length, my / length
-            nx = self.x + mx * step
-            ny = self.y + my * step
-            if self.can_move_to(nx, ny, obstacles):
-                self.x, self.y = nx, ny
-                moved = True
-                break
-
-        if moved:
-            self.stuck_timer = 0.0
-        else:
-            self.stuck_timer += seconds
-
-        # If blocked for more than a fraction of a second, immediately pick
-        # a destination from the current position and try again next frame.
-        if self.stuck_timer > 0.35:
+        arrived = self._move_toward(self.target_x, self.target_y, dt, obstacles)
+        if arrived:
+            self.wait_timer = random.uniform(0.15, 0.7)
+            self.choose_new_destination(obstacles)
+        elif self.stuck_timer > 0.35:
             self.choose_new_destination(obstacles)
             self.stuck_timer = 0.0
             self.wait_timer = 0.0
@@ -5858,6 +5929,14 @@ class FairyNPC(Fairy):
             marker_surface = game.title_font.render(marker, True, (255, 230, 100))
             marker_rect = marker_surface.get_rect(center=(sx + self.rect.width // 2, sy - 48))
             screen.blit(marker_surface, marker_rect)
+
+        if self.is_home:
+            home_text = "HOME" if self.home_reached else "GOING HOME"
+            home_surface = game.tiny_font.render(home_text, True, (190, 230, 255))
+            home_rect = home_surface.get_rect(center=(sx + self.rect.width // 2, sy + 10))
+            bg = home_rect.inflate(10, 4)
+            pygame.draw.rect(screen, (45, 65, 95), bg, border_radius=7)
+            screen.blit(home_surface, home_rect)
 
 
 # ================================================================
@@ -5928,6 +6007,8 @@ class Game:
 
         self.coins = 0
 
+        # In-game clock: starts at 08:00 and loops through a full day.
+        self.game_time_ms = (8 * 60 / 24) * GAME_DAY_LENGTH_MS
         self.selected_character = None
 
         # --------------------------------------------------------
@@ -6025,6 +6106,9 @@ class Game:
 
         # Quest details screen.
         self.selected_quest = None
+
+        # Relationship menu.
+        self.relationship_scroll = 0
 
         # --------------------------------------------------------
         # Notification
@@ -7311,11 +7395,12 @@ class Game:
             "version": 1,
             "selected_character": self.selected_character,
             "coins": self.coins,
+            "game_time_ms": self.game_time_ms,
             "player": {"x": self.player.x, "y": self.player.y},
             "companion": ({"x": self.companion.x, "y": self.companion.y} if self.companion else None),
             "flowers": [bool(f.collected) for f in self.flowers],
             "quest_items": [bool(i.collected) for i in self.quest_items],
-            "npcs": [{"name": n.name, "x": n.x, "y": n.y} for n in self.npcs],
+            "npcs": [{"name": n.name, "x": n.x, "y": n.y, "friendship": n.friendship} for n in self.npcs],
             "quests": [{"quest_id": q.quest_id, "progress": q.progress, "accepted": q.accepted, "completed": q.completed, "reward_claimed": q.reward_claimed, "visited_targets": list(q.visited_targets)} for q in self.quests],
             "navigator": {"enabled": self.navigator_enabled, "quest_id": self.navigator_quest_id}
         }
@@ -7364,6 +7449,7 @@ class Game:
             self.companion = PartyFairy(companion_name, companion_image, float(cdata.get("x", px - 80)), float(cdata.get("y", py)))
             self.selected_character = character
             self.coins = int(data.get("coins", 0))
+            self.game_time_ms = float(data.get("game_time_ms", (8 * 60 / 24) * GAME_DAY_LENGTH_MS)) % GAME_DAY_LENGTH_MS
 
             for i, value in enumerate(data.get("flowers", [])):
                 if i < len(self.flowers): self.flowers[i].collected = bool(value)
@@ -7375,6 +7461,7 @@ class Game:
                 npc = npc_by_name.get(saved.get("name"))
                 if npc:
                     npc.x = float(saved.get("x", npc.x)); npc.y = float(saved.get("y", npc.y)); npc.sync_rect(); npc.target_x = npc.x; npc.target_y = npc.y
+                    npc.friendship = int(clamp(saved.get("friendship", 0), 0, npc.friendship_max))
 
             quest_by_id = {q.quest_id: q for q in self.quests}
             for saved in data.get("quests", []):
@@ -7404,9 +7491,49 @@ class Game:
             return False
 
     def start_new_adventure(self, character):
-        self.obstacles = []; self.flowers = []; self.quest_items = []; self.quest_locations = []; self.npcs = []; self.quests = []
-        self.generate_world(); self.create_quests()
-        self.coins = 0; self.navigator_enabled = False; self.navigator_quest_id = None; self.navigator_quest_index = 0
+        # START ADVENTURE is a completely fresh game. Do not reuse any
+        # runtime progress from the previous adventure, and remove the
+        # previous save so CONTINUE cannot load the old adventure.
+        self.obstacles = []
+        self.flowers = []
+        self.quest_items = []
+        self.quest_locations = []
+        self.npcs = []
+        self.quests = []
+
+        self.coins = 0
+        self.game_time_ms = (8 * 60 / 24) * GAME_DAY_LENGTH_MS
+        self.selected_character = None
+
+        self.navigator_enabled = False
+        self.navigator_quest_id = None
+        self.navigator_quest_index = 0
+        self.selected_quest = None
+
+        self.dialogue_npc = None
+        self.dialogue_lines = []
+        self.dialogue_index = 0
+        self.pending_quest = None
+        self.quest_offer_ready = False
+
+        # Reset quest tabs/scroll position.
+        self.quest_tab = 0
+        self.quest_scroll = [0, 0, 0, 0]
+
+        # Build a brand-new world and brand-new NPC objects. Their
+        # friendship values therefore start at 0 again.
+        self.generate_world()
+        self.create_quests()
+
+        # This game uses one save slot. Starting a new adventure replaces
+        # the old save slot so CONTINUE can never restore the previous run.
+        try:
+            if self.save_manager.has_save():
+                os.remove(self.save_manager.path)
+                print("[SAVE] Old save removed for new adventure.")
+        except OSError as exc:
+            print(f"[SAVE] Could not remove old save: {exc}")
+
         self.start_adventure(character)
 
     def start_adventure(
@@ -7572,6 +7699,45 @@ class Game:
                         self.start_adventure(
                             "Mipple"
                         )
+
+            return
+
+        # ========================================================
+        # RELATIONSHIPS
+        # ========================================================
+
+        if self.state == "relationships":
+
+            if event.type == pygame.KEYDOWN:
+
+                if event.key in (pygame.K_r, pygame.K_ESCAPE):
+                    self.state = "playing"
+                    return
+
+                elif event.key == pygame.K_UP:
+                    self.relationship_scroll = max(0, self.relationship_scroll - 70)
+                    return
+
+                elif event.key == pygame.K_DOWN:
+                    self.relationship_scroll += 70
+                    return
+
+                elif event.key == pygame.K_HOME:
+                    self.relationship_scroll = 0
+                    return
+
+                elif event.key == pygame.K_END:
+                    self.relationship_scroll = 999999
+                    return
+
+            elif event.type == pygame.MOUSEWHEEL:
+                self.relationship_scroll = max(0, self.relationship_scroll - event.y * 60)
+                return
+
+            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                if self.get_relationship_back_rect().collidepoint(event.pos):
+                    self.state = "playing"
+                    return
 
             return
 
@@ -7760,6 +7926,10 @@ class Game:
 
                     self.open_quest_log()
 
+                elif event.key == pygame.K_r:
+
+                    self.open_relationships()
+
                 elif event.key == pygame.K_n:
 
                     self.toggle_navigator()
@@ -7780,6 +7950,8 @@ class Game:
                     self.state = "playing"
                 elif event.key == pygame.K_s:
                     self.save_game()
+                elif event.key == pygame.K_r:
+                    self.open_relationships()
                 elif event.key == pygame.K_m:
                     self.save_game()
                     self.state = "main_menu"
@@ -7790,6 +7962,8 @@ class Game:
                     self.state = "playing"
                 elif self.get_pause_save_rect().collidepoint(event.pos):
                     self.save_game()
+                elif self.get_pause_relationships_rect().collidepoint(event.pos):
+                    self.open_relationships(from_pause=True)
                 elif self.get_pause_menu_rect().collidepoint(event.pos):
                     self.save_game()
                     self.state = "main_menu"
@@ -8498,6 +8672,16 @@ class Game:
 
         return best_npc
 
+    def add_npc_friendship(self, npc, amount, reason=None):
+        old_level, new_level = npc.add_friendship(amount)
+        if reason:
+            self.show_notification(f"{npc.name} friendship +{amount} ({npc.friendship}/100)")
+        if new_level != old_level:
+            self.show_notification(f"{npc.name}: {new_level}!")
+
+    def get_npc_friendship_text(self, npc):
+        return f"{npc.get_friendship_level()}  {npc.friendship}/100"
+
     def interact(self):
 
         npc = self.get_nearby_npc()
@@ -8508,6 +8692,8 @@ class Game:
         self.record_talk_objectives(
             npc.name
         )
+
+        self.add_npc_friendship(npc, 2, reason="talk")
 
         quest = self.get_npc_quest(
             npc
@@ -8733,6 +8919,8 @@ class Game:
 
         quest.completed = True
         quest.accepted = False
+
+        self.add_npc_friendship(npc, 15, reason="quest")
 
         if not quest.reward_claimed:
 
@@ -9071,12 +9259,12 @@ class Game:
 
             item.update(dt)
 
-        for npc in self.npcs:
+        self.game_time_ms = (self.game_time_ms + dt) % GAME_DAY_LENGTH_MS
+        game_minutes = (self.game_time_ms / GAME_DAY_LENGTH_MS) * 24 * 60
+        game_hour = int(game_minutes // 60)
 
-            npc.update(
-                dt,
-                self.obstacles
-            )
+        for npc in self.npcs:
+            npc.update(dt, self.obstacles, game_hour)
 
         self.check_flower_collection()
         self.check_quest_items()
@@ -9437,9 +9625,7 @@ class Game:
 
     def draw_world(self):
 
-        self.screen.fill(
-            (150, 205, 135)
-        )
+        self.screen.fill((150, 205, 135))
 
         random_generator = random.Random(
             100
@@ -9531,9 +9717,64 @@ class Game:
                 self.camera
             )
 
+        # Day/night tint. The world remains visible while the sky gradually
+        # becomes darker at night.
+        game_minutes = (self.game_time_ms / GAME_DAY_LENGTH_MS) * 24 * 60
+        hour = game_minutes / 60.0
+        if 6.0 <= hour < 18.0:
+            darkness = 0
+        elif hour < 20.0:
+            darkness = int((hour - 18.0) / 2.0 * 70)
+        elif hour < 6.0:
+            darkness = 120
+        else:
+            darkness = int((20.0 - hour) / 2.0 * 50 + 70) if hour < 22.0 else 120
+        if darkness > 0:
+            overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+            overlay.fill((25, 35, 80, min(145, darkness)))
+            self.screen.blit(overlay, (0, 0))
+
     # ============================================================
     # HUD
     # ============================================================
+
+    def draw_coin_icon(self, surface, center, radius=13):
+        """Draw a small magical 3D-style gold coin without needing an asset."""
+        cx, cy = center
+
+        # Soft shadow / lower rim
+        pygame.draw.circle(surface, (120, 82, 25), (cx + 1, cy + 2), radius)
+
+        # Dark gold outer rim
+        pygame.draw.circle(surface, (190, 130, 35), (cx, cy), radius)
+
+        # Main gold face
+        pygame.draw.circle(surface, (255, 205, 65), (cx, cy), radius - 2)
+
+        # Inner embossed face
+        pygame.draw.circle(surface, (255, 225, 105), (cx, cy), radius - 5)
+        pygame.draw.circle(surface, (226, 166, 48), (cx, cy), radius - 6, 1)
+
+        # Magical four-point sparkle/star in the middle
+        star = [
+            (cx, cy - 6),
+            (cx + 2, cy - 2),
+            (cx + 6, cy),
+            (cx + 2, cy + 2),
+            (cx, cy + 6),
+            (cx - 2, cy + 2),
+            (cx - 6, cy),
+            (cx - 2, cy - 2),
+        ]
+        pygame.draw.polygon(surface, (255, 245, 175), star)
+
+        # Small glossy highlight
+        pygame.draw.circle(
+            surface,
+            (255, 250, 205),
+            (cx - radius // 3, cy - radius // 3),
+            max(2, radius // 5),
+        )
 
     def draw_hud(self):
 
@@ -9576,17 +9817,23 @@ class Game:
             )
         )
 
-        coins = self.font.render(
-            f"★ {self.coins} coins",
+        # Coin icon + count
+        self.draw_coin_icon(
+            self.screen,
+            (42, 73),
+            radius=13
+        )
+
+        coin_text = self.font.render(
+            str(self.coins),
             True,
             (255, 225, 90)
         )
 
         self.screen.blit(
-            coins,
-            (
-                30,
-                62
+            coin_text,
+            coin_text.get_rect(
+                midleft=(62, 73)
             )
         )
 
@@ -9608,11 +9855,42 @@ class Game:
             )
         )
 
+        game_minutes = (self.game_time_ms / GAME_DAY_LENGTH_MS) * 24 * 60
+        total_minutes = int(game_minutes) % (24 * 60)
+        hh = total_minutes // 60
+        mm = total_minutes % 60
+        period = "DAY" if 6 <= hh < 20 else "NIGHT"
+        clock_text = self.large_font.render(
+            f"TIME  {hh:02d}:{mm:02d}  •  {period}",
+            True,
+            (230, 240, 255)
+        )
+        clock_rect = clock_text.get_rect(
+            top=18,
+            right=SCREEN_WIDTH - 18
+        )
+        clock_bg = clock_rect.inflate(20, 10)
+        pygame.draw.rect(
+            self.screen,
+            (45, 50, 80),
+            clock_bg,
+            border_radius=12
+        )
+        pygame.draw.rect(
+            self.screen,
+            (180, 190, 235),
+            clock_bg,
+            2,
+            border_radius=12
+        )
+        self.screen.blit(clock_text, clock_rect)
+
         controls = self.small_font.render(
             (
                 "WASD Move   "
                 "E Interact   "
                 "Q Quest Log   "
+                "R Relationships   "
                 "N Navigate   "
                 "ESC Pause"
             ),
@@ -9621,7 +9899,7 @@ class Game:
         )
 
         controls_rect = controls.get_rect(
-            top=15,
+            top=62,
             right=SCREEN_WIDTH - 15
         )
 
@@ -9870,6 +10148,25 @@ class Game:
                 panel.y + 18
             )
         )
+
+        relationship = self.dialogue_npc
+        rel_label = self.small_font.render(
+            f"Friendship: {self.get_npc_friendship_text(relationship)}",
+            True,
+            (245, 220, 150)
+        )
+        rel_rect = rel_label.get_rect(
+            top=panel.y + 24,
+            right=panel.right - 25
+        )
+        self.screen.blit(rel_label, rel_rect)
+
+        bar = pygame.Rect(panel.right - 230, panel.y + 50, 205, 10)
+        pygame.draw.rect(self.screen, (35, 30, 50), bar, border_radius=5)
+        fill_width = int(bar.width * relationship.friendship / relationship.friendship_max)
+        if fill_width > 0:
+            fill = pygame.Rect(bar.x, bar.y, fill_width, bar.height)
+            pygame.draw.rect(self.screen, (255, 190, 120), fill, border_radius=5)
 
         if self.dialogue_lines:
 
@@ -10499,6 +10796,106 @@ class Game:
         )
 
     # ============================================================
+    # RELATIONSHIPS
+    # ============================================================
+
+    def open_relationships(self, from_pause=False):
+        if self.state not in ("playing", "pause"):
+            return
+        self.relationship_scroll = 0
+        self.state = "relationships"
+
+    def get_relationship_back_rect(self):
+        return pygame.Rect(SCREEN_WIDTH // 2 - 110, SCREEN_HEIGHT - 75, 220, 48)
+
+    def draw_relationships(self):
+        # Draw a soft backdrop so this feels like a proper game menu.
+        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        overlay.fill((25, 20, 45, 245))
+        self.screen.blit(overlay, (0, 0))
+
+        title = self.title_font.render("RELATIONSHIPS", True, (255, 235, 170))
+        self.screen.blit(title, title.get_rect(center=(SCREEN_WIDTH // 2, 55)))
+
+        subtitle = self.small_font.render(
+            "Build friendship by talking to fairies and helping with their quests",
+            True,
+            (225, 215, 240)
+        )
+        self.screen.blit(subtitle, subtitle.get_rect(center=(SCREEN_WIDTH // 2, 88)))
+
+        npcs = list(self.npcs)
+        card_w = min(860, SCREEN_WIDTH - 100)
+        card_h = 105
+        gap = 14
+        start_x = (SCREEN_WIDTH - card_w) // 2
+        start_y = 120 - self.relationship_scroll
+
+        total_height = len(npcs) * (card_h + gap) - gap
+        viewport_top = 110
+        viewport_bottom = SCREEN_HEIGHT - 100
+
+        # Clip cards to the menu viewport.
+        old_clip = self.screen.get_clip()
+        self.screen.set_clip(pygame.Rect(0, viewport_top, SCREEN_WIDTH, viewport_bottom - viewport_top))
+
+        for index, npc in enumerate(npcs):
+            y = start_y + index * (card_h + gap)
+            card = pygame.Rect(start_x, y, card_w, card_h)
+
+            bg = (65, 52, 88)
+            border = (150, 125, 185)
+            pygame.draw.rect(self.screen, bg, card, border_radius=16)
+            pygame.draw.rect(self.screen, border, card, 2, border_radius=16)
+
+            # Portrait / fairy icon.
+            portrait_rect = pygame.Rect(card.x + 14, card.y + 12, 80, 80)
+            pygame.draw.rect(self.screen, (45, 35, 65), portrait_rect, border_radius=14)
+            if getattr(npc, "image", None) is not None:
+                image = npc.image
+                image_copy = image.copy()
+                image_copy = pygame.transform.smoothscale(image_copy, (64, 64))
+                image_rect = image_copy.get_rect(center=portrait_rect.center)
+                self.screen.blit(image_copy, image_rect)
+
+            name = self.large_font.render(npc.name, True, (255, 240, 190))
+            self.screen.blit(name, (card.x + 112, card.y + 12))
+
+            level = npc.get_friendship_level()
+            level_text = self.small_font.render(level, True, (225, 210, 255))
+            self.screen.blit(level_text, (card.x + 112, card.y + 43))
+
+            # Friendship bar.
+            bar = pygame.Rect(card.x + 112, card.y + 68, card_w - 230, 14)
+            pygame.draw.rect(self.screen, (35, 28, 50), bar, border_radius=7)
+            fill_width = int(bar.width * npc.friendship / npc.friendship_max)
+            if fill_width > 0:
+                fill = pygame.Rect(bar.x, bar.y, fill_width, bar.height)
+                pygame.draw.rect(self.screen, (255, 190, 120), fill, border_radius=7)
+            pygame.draw.rect(self.screen, (180, 165, 205), bar, 1, border_radius=7)
+
+            points = self.small_font.render(
+                f"{npc.friendship} / {npc.friendship_max}",
+                True,
+                (250, 240, 255)
+            )
+            self.screen.blit(points, points.get_rect(midright=(card.right - 18, card.y + 76)))
+
+        self.screen.set_clip(old_clip)
+
+        # Scroll hint.
+        if total_height > viewport_bottom - viewport_top:
+            hint = self.tiny_font.render("↑ ↓ / Mouse Wheel to scroll", True, (190, 180, 210))
+            self.screen.blit(hint, hint.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT - 92)))
+
+        back = self.get_relationship_back_rect()
+        hovered = back.collidepoint(pygame.mouse.get_pos())
+        pygame.draw.rect(self.screen, (120, 90, 155) if hovered else (70, 55, 95), back, border_radius=12)
+        pygame.draw.rect(self.screen, (255, 225, 140) if hovered else (160, 140, 190), back, 2, border_radius=12)
+        back_text = self.font.render("BACK   [R / ESC]", True, (255, 255, 255))
+        self.screen.blit(back_text, back_text.get_rect(center=back.center))
+
+    # ============================================================
     # PAUSE
     # ============================================================
 
@@ -10508,8 +10905,11 @@ class Game:
     def get_pause_save_rect(self):
         return pygame.Rect(SCREEN_WIDTH // 2 - 210, 370, 420, 55)
 
-    def get_pause_menu_rect(self):
+    def get_pause_relationships_rect(self):
         return pygame.Rect(SCREEN_WIDTH // 2 - 210, 440, 420, 55)
+
+    def get_pause_menu_rect(self):
+        return pygame.Rect(SCREEN_WIDTH // 2 - 210, 510, 420, 55)
 
     def draw_pause(self):
 
@@ -10518,7 +10918,7 @@ class Game:
         self.screen.blit(overlay, (0, 0))
         title = self.title_font.render("PAUSED", True, (255, 255, 255))
         self.screen.blit(title, title.get_rect(center=(SCREEN_WIDTH // 2, 220)))
-        buttons = [(self.get_pause_resume_rect(), "RESUME", "ESC"), (self.get_pause_save_rect(), "SAVE GAME", "S"), (self.get_pause_menu_rect(), "SAVE & MAIN MENU", "M")]
+        buttons = [(self.get_pause_resume_rect(), "RESUME", "ESC"), (self.get_pause_save_rect(), "SAVE GAME", "S"), (self.get_pause_relationships_rect(), "RELATIONSHIPS", "R"), (self.get_pause_menu_rect(), "SAVE & MAIN MENU", "M")]
         mouse_pos = pygame.mouse.get_pos()
         for rect, label, key in buttons:
             hovered = rect.collidepoint(mouse_pos)
@@ -10528,7 +10928,7 @@ class Game:
             pygame.draw.rect(self.screen, border, rect, 2, border_radius=14)
             text = self.font.render(f"{label}   [{key}]", True, (255, 255, 255))
             self.screen.blit(text, text.get_rect(center=rect.center))
-        hint = self.small_font.render("ESC Resume    S Save Game    M Save & Main Menu", True, (225, 215, 240))
+        hint = self.small_font.render("ESC Resume    S Save    R Relationships    M Save & Main Menu", True, (225, 215, 240))
         self.screen.blit(hint, hint.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT - 35)))
 
     # ============================================================
@@ -10728,6 +11128,11 @@ class Game:
         if self.state == "character_select":
 
             self.draw_character_select()
+            return
+
+        if self.state == "relationships":
+
+            self.draw_relationships()
             return
 
         if self.state == "quest_log":
