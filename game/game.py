@@ -1,3 +1,75 @@
+import os
+import math
+import random
+import json
+import pygame
+
+SCREEN_WIDTH = 1100
+SCREEN_HEIGHT = 700
+WORLD_WIDTH = 4000
+WORLD_HEIGHT = 3000
+PLAYER_SPEED = 4.0
+COMPANION_SPEED = 3.5
+NPC_MIN_SPEED = 1.0
+NPC_MAX_SPEED = 1.7
+NPC_INTERACTION_DISTANCE = 115
+FPS = 60
+
+GAME_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_DIR = os.path.dirname(GAME_DIR)
+ASSET_DIR = os.path.join(PROJECT_DIR, "assets", "fairies")
+
+def asset_path(filename):
+    return os.path.join(ASSET_DIR, filename)
+
+def clamp(value, minimum, maximum):
+    return max(minimum, min(value, maximum))
+
+def distance(x1, y1, x2, y2):
+    return math.hypot(x2 - x1, y2 - y1)
+
+def wrap_text(text, font, max_width):
+    words = text.split()
+    lines = []
+    current = ""
+    for word in words:
+        test = word if not current else current + " " + word
+        if font.size(test)[0] <= max_width:
+            current = test
+        else:
+            if current:
+                lines.append(current)
+            current = word
+    if current:
+        lines.append(current)
+    return lines
+
+def load_image(filename, size=None):
+    path = asset_path(filename)
+    if not os.path.exists(path):
+        return None
+    try:
+        image = pygame.image.load(path).convert_alpha()
+        if size:
+            image = pygame.transform.smoothscale(image, size)
+        return image
+    except pygame.error:
+        return None
+
+class Camera:
+    def __init__(self):
+        self.x = 0
+        self.y = 0
+
+    def update(self, target_rect):
+        self.x = target_rect.centerx - SCREEN_WIDTH // 2
+        self.y = target_rect.centery - SCREEN_HEIGHT // 2
+        self.x = clamp(self.x, 0, max(0, WORLD_WIDTH - SCREEN_WIDTH))
+        self.y = clamp(self.y, 0, max(0, WORLD_HEIGHT - SCREEN_HEIGHT))
+
+    def world_to_screen(self, x, y):
+        return int(x - self.x), int(y - self.y)
+
 # # ================================================================
 # # game/game.py
 # # ================================================================
@@ -223,47 +295,208 @@
 
 #         elif self.kind == "house":
 
-#             pygame.draw.rect(
-#                 screen,
-#                 (225, 180, 140),
-#                 rect,
-#                 border_radius=8
+            # Pseudo-3D fairy house: layered walls, side wall, foundation,
+            # deep roof, eaves and highlights create an isometric-style look
+            # while keeping the game fully compatible with Pygame 2D.
+#             body_colors = {
+#                 "mushroom": (232, 185, 145),
+#                 "flower": (246, 205, 158),
+#                 "crystal": (185, 170, 225),
+#                 "treehouse": (176, 132, 92),
+#                 "pond": (170, 210, 198),
+#                 "default": (220, 172, 132),
+#             }
+#             roof_colors = {
+#                 "mushroom": (205, 82, 125),
+#                 "flower": (238, 135, 78),
+#                 "crystal": (105, 125, 205),
+#                 "treehouse": (82, 140, 76),
+#                 "pond": (75, 160, 155),
+#                 "default": (170, 88, 120),
+#             }
+
+#             body = body_colors.get(self.style, body_colors["default"])
+#             roof = roof_colors.get(self.style, roof_colors["default"])
+#             side = tuple(max(0, c - 38) for c in body)
+#             dark = tuple(max(0, c - 65) for c in body)
+#             light = tuple(min(255, c + 28) for c in body)
+
+#             depth = 24
+#             lift = 16
+
+            # Ground shadow makes the building feel elevated from the ground.
+#             shadow = pygame.Rect(
+#                 rect.left - 8, rect.bottom - 4,
+#                 rect.width + 30, 24
+#             )
+#             pygame.draw.ellipse(screen, (105, 120, 105), shadow)
+
+            # Raised stone foundation.
+#             foundation = pygame.Rect(
+#                 rect.left - 2, rect.bottom - 20,
+#                 rect.width + 4, 20
+#             )
+#             pygame.draw.rect(screen, dark, foundation, border_radius=5)
+#             pygame.draw.line(
+#                 screen, light,
+#                 (foundation.left + 5, foundation.top + 4),
+#                 (foundation.right - 5, foundation.top + 4), 3
 #             )
 
-#             roof_points = [
-#                 (
-#                     rect.left - 15,
-#                     rect.top + 35
-#                 ),
-#                 (
-#                     rect.centerx,
-#                     rect.top - 30
-#                 ),
-#                 (
-#                     rect.right + 15,
-#                     rect.top + 35
-#                 )
+            # Right-side wall gives the house visible depth.
+#             side_points = [
+#                 (rect.right, rect.top + 10),
+#                 (rect.right + depth, rect.top - lift + 10),
+#                 (rect.right + depth, rect.bottom - 20 - lift),
+#                 (rect.right, rect.bottom - 20),
 #             ]
+#             pygame.draw.polygon(screen, side, side_points)
+#             pygame.draw.line(screen, dark, side_points[1], side_points[2], 3)
 
-#             pygame.draw.polygon(
-#                 screen,
-#                 (180, 100, 130),
-#                 roof_points
-#             )
-
-#             door = pygame.Rect(
-#                 rect.centerx - 15,
-#                 rect.bottom - 55,
-#                 30,
-#                 55
-#             )
-
+            # Front wall.
+#             pygame.draw.rect(screen, body, rect, border_radius=10)
 #             pygame.draw.rect(
-#                 screen,
-#                 (110, 75, 60),
-#                 door,
-#                 border_radius=4
+#                 screen, light, rect.inflate(-8, -8), 3, border_radius=8
 #             )
+
+            # Vertical wall shading to strengthen the 3D form.
+#             pygame.draw.rect(
+#                 screen, tuple(max(0, c - 18) for c in body),
+#                 (rect.right - 18, rect.top + 10, 18, rect.height - 30)
+#             )
+
+            # Deep roof/eave layer.
+#             roof_left = rect.left - 22
+#             roof_right = rect.right + depth + 12
+#             roof_base_y = rect.top + 28
+#             roof_peak_y = rect.top - 58
+
+            # Roof thickness first.
+#             roof_depth = [
+#                 (roof_left, roof_base_y),
+#                 (rect.centerx, roof_peak_y),
+#                 (roof_right, roof_base_y),
+#                 (roof_right, roof_base_y + 18),
+#                 (rect.centerx, roof_peak_y + 18),
+#                 (roof_left, roof_base_y + 18),
+#             ]
+#             pygame.draw.polygon(
+#                 screen, tuple(max(0, c - 42) for c in roof), roof_depth
+#             )
+
+            # Main solid roof.
+#             roof_points = [
+#                 (roof_left, roof_base_y),
+#                 (rect.centerx, roof_peak_y),
+#                 (roof_right, roof_base_y),
+#             ]
+#             pygame.draw.polygon(screen, roof, roof_points)
+#             pygame.draw.polygon(screen, light, roof_points, 3)
+
+            # Roof highlight gives a lit top plane.
+#             highlight = tuple(min(255, c + 25) for c in roof)
+#             pygame.draw.line(
+#                 screen, highlight,
+#                 (rect.centerx, roof_peak_y + 5),
+#                 (roof_left + 24, roof_base_y - 5), 5
+#             )
+
+#             if self.style == "mushroom":
+                # Solid mushroom cap with raised spots.
+#                 for sx, sy, sr in [
+#                     (rect.left + 30, rect.top - 20, 10),
+#                     (rect.centerx, rect.top - 42, 13),
+#                     (rect.right - 30, rect.top - 18, 9),
+#                 ]:
+#                     pygame.draw.circle(screen, (255, 225, 230), (sx, sy), sr)
+#                     pygame.draw.circle(screen, (235, 185, 195), (sx, sy), sr, 2)
+
+#             elif self.style == "flower":
+                # Raised flower ornament on the roof peak.
+#                 cx, cy = rect.centerx, roof_peak_y + 12
+#                 for angle in range(0, 360, 72):
+#                     rad = math.radians(angle)
+#                     px = cx + int(math.cos(rad) * 22)
+#                     py = cy + int(math.sin(rad) * 12)
+#                     pygame.draw.ellipse(screen, (255, 180, 205), (px - 14, py - 9, 28, 18))
+#                 pygame.draw.circle(screen, (255, 220, 80), (cx, cy), 9)
+
+#             elif self.style == "crystal":
+                # Crystal towers rising from the roof.
+#                 for cx, cy, w, h in [
+#                     (rect.left + 42, roof_base_y - 5, 18, 48),
+#                     (rect.centerx + 8, roof_peak_y + 4, 22, 60),
+#                     (rect.right - 38, roof_base_y - 3, 16, 42),
+#                 ]:
+#                     pts = [(cx, cy - h), (cx + w // 2, cy), (cx, cy + 4), (cx - w // 2, cy)]
+#                     pygame.draw.polygon(screen, (165, 205, 255), pts)
+#                     pygame.draw.polygon(screen, (240, 245, 255), pts, 2)
+
+#             elif self.style == "treehouse":
+                # Wooden supports extend below the elevated cottage.
+#                 for px in (rect.left + 25, rect.right - 25):
+#                     pygame.draw.line(
+#                         screen, (92, 62, 38),
+#                         (px, rect.bottom - 8),
+#                         (px + 8, rect.bottom + 22), 13
+#                     )
+#                 pygame.draw.circle(screen, (110, 170, 85), (rect.centerx, roof_peak_y + 22), 42)
+#                 pygame.draw.circle(screen, (145, 195, 100), (rect.left + 35, roof_base_y), 25)
+#                 pygame.draw.circle(screen, (90, 150, 75), (rect.right - 30, roof_base_y + 4), 28)
+
+#             elif self.style == "pond":
+                # Layered blue roof like a magical water dome.
+#                 pygame.draw.ellipse(
+#                     screen, (105, 195, 190),
+#                     (rect.left + 18, roof_peak_y - 2, rect.width - 36, 38)
+#                 )
+#                 pygame.draw.arc(
+#                     screen, (225, 255, 250),
+#                     (rect.left + 25, roof_peak_y + 4, rect.width - 50, 25),
+#                     math.pi, math.pi * 2, 3
+#                 )
+
+            # Windows with thick frames and side shading.
+#             window_y = rect.top + 55
+#             for wx in (rect.left + 36, rect.right - 36):
+#                 frame = pygame.Rect(wx - 18, window_y - 18, 36, 36)
+#                 pygame.draw.rect(screen, dark, frame, border_radius=8)
+#                 glass = frame.inflate(-5, -5)
+#                 pygame.draw.rect(screen, (145, 220, 238), glass, border_radius=6)
+#                 pygame.draw.line(screen, (235, 255, 255), glass.topleft, glass.bottomright, 3)
+#                 pygame.draw.line(screen, (105, 170, 195), (wx, glass.top), (wx, glass.bottom), 2)
+#                 pygame.draw.line(screen, (105, 170, 195), (glass.left, window_y), (glass.right, window_y), 2)
+
+            # Recessed front door.
+#             door = pygame.Rect(rect.centerx - 20, rect.bottom - 66, 40, 66)
+#             pygame.draw.rect(screen, dark, door.inflate(8, 8), border_radius=10)
+#             pygame.draw.rect(
+#                 screen, (105, 70, 58) if self.style != "crystal" else (82, 78, 125),
+#                 door, border_radius=8
+#             )
+#             pygame.draw.line(
+#                 screen, (155, 110, 88),
+#                 (door.left + 5, door.top + 5),
+#                 (door.left + 5, door.bottom - 8), 3
+#             )
+#             pygame.draw.circle(screen, (255, 215, 100), (door.right - 8, door.centery), 4)
+
+            # Chimney with visible top and side face.
+#             chimney = pygame.Rect(rect.right - 42, rect.top - 30, 22, 48)
+#             pygame.draw.rect(screen, (145, 105, 95), chimney)
+#             pygame.draw.polygon(screen, (115, 82, 75), [
+#                 (chimney.right, chimney.top),
+#                 (chimney.right + 8, chimney.top - 5),
+#                 (chimney.right + 8, chimney.bottom - 5),
+#                 (chimney.right, chimney.bottom),
+#             ])
+#             pygame.draw.rect(screen, (190, 145, 130), chimney.inflate(4, 4), 3)
+
+            # Small garden stones and flowers kept inside the house footprint.
+#             for dx in (-58, 58):
+#                 gx = rect.centerx + dx
+#                 pygame.draw.ellipse(screen, (125, 135, 125), (gx - 8, rect.bottom - 12, 16, 8))
+#                 pygame.draw.circle(screen, (255, 175, 210), (gx, rect.bottom - 18), 5)
 
 #         elif self.kind == "fence":
 
@@ -4302,163 +4535,164 @@
 # game/game.py
 # ================================================================
 
-import os
-import math
-import random
-import pygame
+# import os
+# import math
+# import random
+# import json
+# import pygame
 
 
 # ================================================================
 # CONSTANTS
 # ================================================================
 
-SCREEN_WIDTH = 1100
-SCREEN_HEIGHT = 700
+# SCREEN_WIDTH = 1100
+# SCREEN_HEIGHT = 700
 
-WORLD_WIDTH = 4000
-WORLD_HEIGHT = 3000
+# WORLD_WIDTH = 4000
+# WORLD_HEIGHT = 3000
 
-PLAYER_SPEED = 4.0
-COMPANION_SPEED = 3.5
+# PLAYER_SPEED = 4.0
+# COMPANION_SPEED = 3.5
 
-NPC_MIN_SPEED = 1.0
-NPC_MAX_SPEED = 1.7
+# NPC_MIN_SPEED = 1.0
+# NPC_MAX_SPEED = 1.7
 
-NPC_INTERACTION_DISTANCE = 115
+# NPC_INTERACTION_DISTANCE = 115
 
-FPS = 60
+# FPS = 60
 
 
 # ================================================================
 # PATHS
 # ================================================================
 
-GAME_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_DIR = os.path.dirname(GAME_DIR)
-ASSET_DIR = os.path.join(PROJECT_DIR, "assets", "fairies")
+# GAME_DIR = os.path.dirname(os.path.abspath(__file__))
+# PROJECT_DIR = os.path.dirname(GAME_DIR)
+# ASSET_DIR = os.path.join(PROJECT_DIR, "assets", "fairies")
 
 
-def asset_path(filename):
-    return os.path.join(ASSET_DIR, filename)
+# def asset_path(filename):
+#     return os.path.join(ASSET_DIR, filename)
 
 
 # ================================================================
 # HELPERS
 # ================================================================
 
-def clamp(value, minimum, maximum):
-    return max(minimum, min(value, maximum))
+# def clamp(value, minimum, maximum):
+#     return max(minimum, min(value, maximum))
 
 
-def distance(x1, y1, x2, y2):
-    return math.hypot(x2 - x1, y2 - y1)
+# def distance(x1, y1, x2, y2):
+#     return math.hypot(x2 - x1, y2 - y1)
 
 
-def wrap_text(text, font, max_width):
-    words = text.split()
+# def wrap_text(text, font, max_width):
+#     words = text.split()
 
-    lines = []
-    current = ""
+#     lines = []
+#     current = ""
 
-    for word in words:
+#     for word in words:
 
-        test = (
-            word
-            if not current
-            else current + " " + word
-        )
+#         test = (
+#             word
+#             if not current
+#             else current + " " + word
+#         )
 
-        if font.size(test)[0] <= max_width:
+#         if font.size(test)[0] <= max_width:
 
-            current = test
+#             current = test
 
-        else:
+#         else:
 
-            if current:
-                lines.append(current)
+#             if current:
+#                 lines.append(current)
 
-            current = word
+#             current = word
 
-    if current:
-        lines.append(current)
+#     if current:
+#         lines.append(current)
 
-    return lines
+#     return lines
 
 
-def load_image(filename, size=None):
+# def load_image(filename, size=None):
 
-    path = asset_path(filename)
+#     path = asset_path(filename)
 
-    if not os.path.exists(path):
-        return None
+#     if not os.path.exists(path):
+#         return None
 
-    try:
+#     try:
 
-        image = pygame.image.load(
-            path
-        ).convert_alpha()
+#         image = pygame.image.load(
+#             path
+#         ).convert_alpha()
 
-        if size:
+#         if size:
 
-            image = pygame.transform.smoothscale(
-                image,
-                size
-            )
+#             image = pygame.transform.smoothscale(
+#                 image,
+#                 size
+#             )
 
-        return image
+#         return image
 
-    except pygame.error:
+#     except pygame.error:
 
-        return None
+#         return None
 
 
 # ================================================================
 # CAMERA
 # ================================================================
 
-class Camera:
+# class Camera:
 
-    def __init__(self):
+#     def __init__(self):
 
-        self.x = 0
-        self.y = 0
+#         self.x = 0
+#         self.y = 0
 
-    def update(self, target_rect):
+#     def update(self, target_rect):
 
-        self.x = (
-            target_rect.centerx
-            - SCREEN_WIDTH // 2
-        )
+#         self.x = (
+#             target_rect.centerx
+#             - SCREEN_WIDTH // 2
+#         )
 
-        self.y = (
-            target_rect.centery
-            - SCREEN_HEIGHT // 2
-        )
+#         self.y = (
+#             target_rect.centery
+#             - SCREEN_HEIGHT // 2
+#         )
 
-        self.x = clamp(
-            self.x,
-            0,
-            max(
-                0,
-                WORLD_WIDTH - SCREEN_WIDTH
-            )
-        )
+#         self.x = clamp(
+#             self.x,
+#             0,
+#             max(
+#                 0,
+#                 WORLD_WIDTH - SCREEN_WIDTH
+#             )
+#         )
 
-        self.y = clamp(
-            self.y,
-            0,
-            max(
-                0,
-                WORLD_HEIGHT - SCREEN_HEIGHT
-            )
-        )
+#         self.y = clamp(
+#             self.y,
+#             0,
+#             max(
+#                 0,
+#                 WORLD_HEIGHT - SCREEN_HEIGHT
+#             )
+#         )
 
-    def world_to_screen(self, x, y):
+#     def world_to_screen(self, x, y):
 
-        return (
-            int(x - self.x),
-            int(y - self.y)
-        )
+#         return (
+#             int(x - self.x),
+#             int(y - self.y)
+#         )
 
 
 # ================================================================
@@ -4473,7 +4707,8 @@ class Obstacle:
         y,
         width,
         height,
-        kind="tree"
+        kind="tree",
+        style="default"
     ):
 
         self.rect = pygame.Rect(
@@ -4484,6 +4719,7 @@ class Obstacle:
         )
 
         self.kind = kind
+        self.style = style
 
     def draw(self, screen, camera):
 
@@ -4548,64 +4784,142 @@ class Obstacle:
 
         elif self.kind == "rock":
 
-            pygame.draw.ellipse(
-                screen,
-                (125, 130, 145),
-                rect
-            )
-
-            pygame.draw.ellipse(
-                screen,
-                (155, 160, 175),
-                rect.inflate(
-                    -10,
-                    -10
-                )
-            )
+            pygame.draw.ellipse(screen, (105, 110, 125), rect)
+            top = rect.inflate(-10, -8)
+            top.move_ip(-2, -5)
+            pygame.draw.ellipse(screen, (158, 164, 178), top)
+            pygame.draw.ellipse(screen, (190, 195, 207), top.inflate(-14, -10))
+            pygame.draw.line(screen, (220, 224, 232),
+                             (top.left + 8, top.centery - 4),
+                             (top.centerx, top.top + 4), 3)
 
         elif self.kind == "house":
 
-            pygame.draw.rect(
-                screen,
-                (225, 180, 140),
-                rect,
-                border_radius=8
+            # Every house has its own silhouette, construction and entrance.
+            style = self.style
+            pygame.draw.ellipse(
+                screen, (82, 100, 88),
+                (rect.left - 20, rect.bottom - 3, rect.width + 65, 28)
             )
 
-            roof_points = [
-                (
-                    rect.left - 15,
-                    rect.top + 35
-                ),
-                (
-                    rect.centerx,
-                    rect.top - 30
-                ),
-                (
-                    rect.right + 15,
-                    rect.top + 35
-                )
-            ]
+            if style == "mushroom":
+                # Round mushroom cottage.
+                wall = pygame.Rect(rect.left + 35, rect.top + 38, rect.width - 70, rect.height - 48)
+                pygame.draw.rect(screen, (204, 139, 105), wall.move(8, 9), border_radius=28)
+                pygame.draw.rect(screen, (246, 197, 157), wall, border_radius=28)
+                cap = pygame.Rect(rect.left - 18, rect.top - 25, rect.width + 36, 92)
+                pygame.draw.ellipse(screen, (158, 54, 91), cap.move(7, 13))
+                pygame.draw.ellipse(screen, (218, 69, 122), cap)
+                pygame.draw.arc(screen, (250, 137, 170), cap.inflate(-8, -8), math.pi*.08, math.pi*.92, 5)
+                for sx, sy, sr in [(rect.left+28,rect.top+8,12),(rect.centerx-5,rect.top-9,16),(rect.right-28,rect.top+9,11)]:
+                    pygame.draw.circle(screen, (255,232,235), (sx,sy), sr)
+                    pygame.draw.circle(screen, (239,183,198), (sx,sy), sr, 2)
+                porch = pygame.Rect(rect.centerx-43, wall.bottom-17, 86, 18)
+                pygame.draw.rect(screen, (133,88,67), porch, border_radius=7)
+                door = pygame.Rect(rect.centerx-22, wall.bottom-61, 44, 61)
+                pygame.draw.ellipse(screen, (104,67,55), door)
+                pygame.draw.circle(screen, (255,214,103), (door.right-9,door.centery), 4)
+                for wx in (wall.left+22, wall.right-22):
+                    pygame.draw.circle(screen, (117,78,67), (wx,wall.top+47), 17)
+                    pygame.draw.circle(screen, (154,226,237), (wx,wall.top+47), 12)
 
-            pygame.draw.polygon(
-                screen,
-                (180, 100, 130),
-                roof_points
-            )
+            elif style == "flower":
+                # Flower-shaped cottage with six giant petals.
+                base = [(rect.left+50,rect.bottom-10),(rect.left+36,rect.top+65),(rect.left+58,rect.top+37),
+                        (rect.centerx,rect.top+52),(rect.right-58,rect.top+37),(rect.right-36,rect.top+65),(rect.right-50,rect.bottom-10)]
+                pygame.draw.polygon(screen, (177,111,91), [(x+8,y+9) for x,y in base])
+                pygame.draw.polygon(screen, (249,205,151), base)
+                cx,cy = rect.centerx,rect.top+27
+                petals=[(245,117,169),(255,145,188),(239,112,180)]
+                for i,angle in enumerate(range(0,360,60)):
+                    rad=math.radians(angle); px=cx+int(math.cos(rad)*49); py=cy+int(math.sin(rad)*28)
+                    petal=pygame.Rect(px-38,py-20,76,40)
+                    pygame.draw.ellipse(screen,(185,78,130),petal.move(5,7))
+                    pygame.draw.ellipse(screen,petals[i%3],petal)
+                pygame.draw.circle(screen,(255,214,77),(cx,cy),25)
+                pygame.draw.circle(screen,(255,238,126),(cx-5,cy-5),12)
+                door=pygame.Rect(cx-22,rect.bottom-69,44,69)
+                pygame.draw.ellipse(screen,(137,79,105),door)
+                pygame.draw.ellipse(screen,(190,111,139),door.inflate(-7,-6))
+                pygame.draw.ellipse(screen,(87,158,91),(rect.left+5,rect.bottom-48,55,25))
+                pygame.draw.ellipse(screen,(105,177,95),(rect.right-60,rect.bottom-48,55,25))
 
-            door = pygame.Rect(
-                rect.centerx - 15,
-                rect.bottom - 55,
-                30,
-                55
-            )
+            elif style == "crystal":
+                # Tall crystal palace with three independent towers.
+                body=[(rect.left+45,rect.bottom-15),(rect.left+45,rect.top+54),(rect.centerx,rect.top+15),
+                      (rect.right-45,rect.top+54),(rect.right-45,rect.bottom-15)]
+                pygame.draw.polygon(screen,(105,101,164),[(x+8,y+10) for x,y in body])
+                pygame.draw.polygon(screen,(187,177,231),body)
+                for cx,base_y,w,h in [(rect.left+32,rect.top+55,34,100),(rect.centerx,rect.top+8,46,145),(rect.right-32,rect.top+55,34,100)]:
+                    pts=[(cx,base_y-h),(cx+w//2,base_y-24),(cx+w//3,base_y),(cx-w//3,base_y),(cx-w//2,base_y-24)]
+                    pygame.draw.polygon(screen,(78,106,180),[(x+6,y+8) for x,y in pts])
+                    pygame.draw.polygon(screen,(112,163,231),pts)
+                    pygame.draw.line(screen,(225,247,255),pts[0],pts[2],3)
+                crystal=[(rect.centerx,rect.top-33),(rect.centerx+13,rect.top-9),(rect.centerx,rect.top+14),(rect.centerx-13,rect.top-9)]
+                pygame.draw.polygon(screen,(104,204,247),crystal)
+                pygame.draw.polygon(screen,(235,255,255),crystal,2)
+                door=pygame.Rect(rect.centerx-25,rect.bottom-79,50,79)
+                pygame.draw.ellipse(screen,(63,65,117),door)
+                pygame.draw.ellipse(screen,(121,142,214),door.inflate(-8,-7))
+                for wx in (rect.left+70,rect.right-70):
+                    pts=[(wx,rect.top+63),(wx+15,rect.top+82),(wx,rect.top+101),(wx-15,rect.top+82)]
+                    pygame.draw.polygon(screen,(118,218,245),pts)
+                    pygame.draw.polygon(screen,(238,255,255),pts,2)
 
-            pygame.draw.rect(
-                screen,
-                (110, 75, 60),
-                door,
-                border_radius=4
-            )
+            elif style == "treehouse":
+                # Elevated wooden cabin built into a giant tree.
+                tx=rect.centerx
+                pygame.draw.polygon(screen,(87,57,36),[(tx-27,rect.bottom+15),(tx-17,rect.top+35),(tx+17,rect.top+35),(tx+32,rect.bottom+15)])
+                pygame.draw.polygon(screen,(132,86,48),[(tx-13,rect.bottom+10),(tx-8,rect.top+43),(tx+11,rect.top+43),(tx+18,rect.bottom+10)])
+                pygame.draw.line(screen,(95,61,37),(tx,rect.top+65),(rect.left-15,rect.top+20),14)
+                pygame.draw.line(screen,(95,61,37),(tx+2,rect.top+62),(rect.right+15,rect.top+14),12)
+                cabin=pygame.Rect(rect.left+25,rect.top+45,rect.width-50,76)
+                pygame.draw.rect(screen,(91,57,38),cabin.move(8,10),border_radius=8)
+                pygame.draw.rect(screen,(181,128,76),cabin,border_radius=8)
+                for yy in range(cabin.top+10,cabin.bottom,16):
+                    pygame.draw.line(screen,(130,85,51),(cabin.left+5,yy),(cabin.right-5,yy),3)
+                leaves=[(rect.left+30,rect.top+28,38,(71,133,71)),(rect.centerx-35,rect.top+8,47,(94,161,76)),
+                        (rect.centerx+30,rect.top+18,43,(79,145,69)),(rect.right-25,rect.top+38,34,(62,122,65))]
+                for cx,cy,r,col in leaves: pygame.draw.circle(screen,col,(cx,cy),r)
+                pygame.draw.line(screen,(151,103,61),(rect.centerx-27,cabin.bottom),(rect.centerx-27,rect.bottom+4),5)
+                pygame.draw.line(screen,(151,103,61),(rect.centerx+27,cabin.bottom),(rect.centerx+27,rect.bottom+4),5)
+                for yy in range(cabin.bottom+5,rect.bottom,14):
+                    pygame.draw.line(screen,(181,130,76),(rect.centerx-27,yy),(rect.centerx+27,yy),4)
+                for wx in (cabin.left+25,cabin.right-25):
+                    pygame.draw.circle(screen,(92,61,43),(wx,cabin.centery),15)
+                    pygame.draw.circle(screen,(154,220,229),(wx,cabin.centery),10)
+
+            elif style == "pond":
+                # Water dwelling sitting on a little magical pond.
+                pond=pygame.Rect(rect.left-18,rect.bottom-15,rect.width+36,46)
+                pygame.draw.ellipse(screen,(45,126,160),pond)
+                pygame.draw.ellipse(screen,(83,187,205),pond.inflate(-8,-8))
+                pygame.draw.arc(screen,(208,250,250),pond.inflate(-12,-12),math.pi,math.pi*2,4)
+                body=pygame.Rect(rect.left+25,rect.top+48,rect.width-50,80)
+                pygame.draw.ellipse(screen,(53,125,145),body.move(7,10))
+                pygame.draw.ellipse(screen,(148,209,201),body)
+                dome=pygame.Rect(rect.left+7,rect.top-16,rect.width-14,105)
+                pygame.draw.ellipse(screen,(40,128,165),dome.move(6,9))
+                pygame.draw.ellipse(screen,(78,181,201),dome)
+                pygame.draw.arc(screen,(221,255,255),dome.inflate(-16,-16),math.pi*.08,math.pi*.92,5)
+                door=pygame.Rect(rect.centerx-23,rect.bottom-62,46,62)
+                pygame.draw.ellipse(screen,(36,103,132),door)
+                pygame.draw.ellipse(screen,(91,194,211),door.inflate(-7,-5))
+                for wx in (rect.left+40,rect.right-40):
+                    pygame.draw.circle(screen,(43,120,150),(wx,rect.top+70),17)
+                    pygame.draw.circle(screen,(167,239,241),(wx,rect.top+70),11)
+                for px,py in [(rect.left+2,rect.bottom+12),(rect.right-4,rect.bottom+18)]:
+                    pygame.draw.ellipse(screen,(76,158,96),(px-18,py-8,36,16))
+
+            else:
+                wall=pygame.Rect(rect.left+20,rect.top+35,rect.width-40,rect.height-45)
+                pygame.draw.rect(screen,(225,180,140),wall,border_radius=12)
+                pygame.draw.polygon(screen,(180,90,125),[(rect.left,rect.top+45),(rect.centerx,rect.top-35),(rect.right,rect.top+45)])
+                pygame.draw.rect(screen,(105,70,58),(rect.centerx-20,wall.bottom-60,40,60),border_radius=8)
+
+            for dx in (-62,62):
+                gx=rect.centerx+dx
+                pygame.draw.ellipse(screen,(126,137,128),(gx-8,rect.bottom-5,16,8))
 
         elif self.kind == "fence":
 
@@ -5441,6 +5755,40 @@ class FairyNPC(Fairy):
 # GAME
 # ================================================================
 
+# ================================================================
+# SAVE MANAGER
+# ================================================================
+
+class SaveManager:
+    def __init__(self):
+        self.path = os.path.join(PROJECT_DIR, "data", "savegame.json")
+
+    def has_save(self):
+        return os.path.isfile(self.path)
+
+    def save(self, data):
+        try:
+            os.makedirs(os.path.dirname(self.path), exist_ok=True)
+            temp = self.path + ".tmp"
+            with open(temp, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+            os.replace(temp, self.path)
+            return True
+        except (OSError, TypeError, ValueError) as exc:
+            print(f"[SAVE] Failed: {exc}")
+            return False
+
+    def load(self):
+        if not self.has_save():
+            return None
+        try:
+            with open(self.path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except (OSError, json.JSONDecodeError) as exc:
+            print(f"[SAVE] Load failed: {exc}")
+            return None
+
+
 class Game:
 
     def __init__(self, screen):
@@ -5448,6 +5796,7 @@ class Game:
         self.screen = screen
 
         self.running = True
+        self.save_manager = SaveManager()
 
         # --------------------------------------------------------
         # IMPORTANT:
@@ -5478,10 +5827,8 @@ class Game:
 
         self.main_menu_selected = 0
 
-        self.main_menu_options = [
-            "START ADVENTURE",
-            "QUIT GAME"
-        ]
+        self.main_menu_options = []
+        self.refresh_main_menu_options()
 
         self.menu_sparkles = []
 
@@ -5641,47 +5988,104 @@ class Game:
                 )
             )
 
-        for _ in range(35):
-
-            x = random.randint(
-                100,
-                WORLD_WIDTH - 150
-            )
-
-            y = random.randint(
-                100,
-                WORLD_HEIGHT - 120
-            )
-
-            self.obstacles.append(
-                Obstacle(
-                    x,
-                    y,
-                    70,
-                    45,
-                    "rock"
-                )
-            )
-
+        # Five distinct fairy homes placed around the world.
+        # Each house uses the same collision footprint but a different
+        # visual style so the world feels like a real fairy village.
         houses = [
-            (500, 500),
-            (1800, 700),
-            (2900, 500),
-            (900, 2200),
-            (3000, 2200)
+            (500, 500, "mushroom"),
+            (1800, 700, "flower"),
+            (2900, 500, "crystal"),
+            (900, 2200, "treehouse"),
+            (3000, 2200, "pond"),
         ]
 
-        for x, y in houses:
+        # Place houses only in clear areas.  The visible house artwork is
+        # larger than its collision rectangle, so we reserve extra space
+        # around every house to keep nearby trees from visually overlapping it.
+        placed_houses = []
 
-            self.obstacles.append(
-                Obstacle(
-                    x,
-                    y,
-                    170,
-                    130,
-                    "house"
-                )
+        for original_x, original_y, style in houses:
+            house_w = 170
+            house_h = 130
+            chosen = None
+
+            # Try the requested position first, then search outward in a
+            # deterministic spiral/grid pattern for a clear location.
+            candidates = [(original_x, original_y)]
+            for radius in range(100, 701, 100):
+                for ox, oy in (
+                    (radius, 0), (-radius, 0),
+                    (0, radius), (0, -radius),
+                    (radius, radius), (-radius, radius),
+                    (radius, -radius), (-radius, -radius),
+                ):
+                    candidates.append((original_x + ox, original_y + oy))
+
+            for cx, cy in candidates:
+                if cx < 100 or cy < 100:
+                    continue
+                if cx + house_w > WORLD_WIDTH - 100:
+                    continue
+                if cy + house_h > WORLD_HEIGHT - 100:
+                    continue
+
+                test_rect = pygame.Rect(cx, cy, house_w, house_h)
+
+                # Extra clearance is intentional because some roofs,
+                # branches and decorations extend beyond self.rect.
+                reserved = test_rect.inflate(95, 85)
+
+                blocked = False
+                for obstacle in self.obstacles:
+                    if reserved.colliderect(obstacle.rect):
+                        blocked = True
+                        break
+
+                if not blocked:
+                    for other in placed_houses:
+                        if reserved.colliderect(other.inflate(95, 85)):
+                            blocked = True
+                            break
+
+                if not blocked:
+                    chosen = (cx, cy)
+                    break
+
+            if chosen is None:
+                # Extremely unlikely fallback: use the requested position.
+                chosen = (original_x, original_y)
+
+            hx, hy = chosen
+            house = Obstacle(
+                hx,
+                hy,
+                house_w,
+                house_h,
+                "house",
+                style
             )
+            self.obstacles.append(house)
+            placed_houses.append(house.rect.copy())
+
+        # Pebbles/rocks are placed only where they do not overlap trees,
+        # houses, fences, or other rocks. This prevents rocks from appearing
+        # inside tree trunks or under buildings.
+        for _ in range(35):
+            for _attempt in range(60):
+                x = random.randint(100, WORLD_WIDTH - 150)
+                y = random.randint(100, WORLD_HEIGHT - 120)
+                rock_rect = pygame.Rect(x, y, 70, 45)
+
+                blocked = any(
+                    rock_rect.inflate(24, 24).colliderect(obstacle.rect)
+                    for obstacle in self.obstacles
+                )
+
+                if not blocked:
+                    self.obstacles.append(
+                        Obstacle(x, y, 70, 45, "rock")
+                    )
+                    break
 
         fences = [
             (350, 850, 300, 20),
@@ -6722,12 +7126,132 @@ class Game:
 
         return 700, 1000
 
+    # ============================================================
+    # SAVE / LOAD
+    # ============================================================
+
+    def refresh_main_menu_options(self):
+        if self.save_manager.has_save():
+            self.main_menu_options = ["CONTINUE", "START ADVENTURE", "QUIT GAME"]
+        else:
+            self.main_menu_options = ["START ADVENTURE", "QUIT GAME"]
+        self.main_menu_selected = int(clamp(self.main_menu_selected, 0, len(self.main_menu_options) - 1))
+
+    def build_save_data(self):
+        if self.player is None or self.selected_character is None:
+            return None
+        return {
+            "version": 1,
+            "selected_character": self.selected_character,
+            "coins": self.coins,
+            "player": {"x": self.player.x, "y": self.player.y},
+            "companion": ({"x": self.companion.x, "y": self.companion.y} if self.companion else None),
+            "flowers": [bool(f.collected) for f in self.flowers],
+            "quest_items": [bool(i.collected) for i in self.quest_items],
+            "npcs": [{"name": n.name, "x": n.x, "y": n.y} for n in self.npcs],
+            "quests": [{"quest_id": q.quest_id, "progress": q.progress, "accepted": q.accepted, "completed": q.completed, "reward_claimed": q.reward_claimed, "visited_targets": list(q.visited_targets)} for q in self.quests],
+            "navigator": {"enabled": self.navigator_enabled, "quest_id": self.navigator_quest_id}
+        }
+
+    def save_game(self, silent=False):
+        data = self.build_save_data()
+        if data is None:
+            if not silent:
+                self.show_notification("There is no active adventure to save.")
+            return False
+        if self.save_manager.save(data):
+            self.refresh_main_menu_options()
+            if not silent:
+                self.show_notification("Game saved successfully!")
+            print("[SAVE] Game saved successfully.")
+            return True
+        if not silent:
+            self.show_notification("Unable to save the game.")
+        return False
+
+    def load_game(self):
+        data = self.save_manager.load()
+        if not data:
+            self.show_notification("No save game found.")
+            return False
+        try:
+            self.obstacles = []
+            self.flowers = []
+            self.quest_items = []
+            self.quest_locations = []
+            self.npcs = []
+            self.quests = []
+            self.generate_world()
+            self.create_quests()
+
+            character = data.get("selected_character", "Mepple")
+            pdata = data.get("player", {})
+            px, py = float(pdata.get("x", 500)), float(pdata.get("y", 1000))
+            if character == "Mipple":
+                self.player = Fairy("Mipple", "mipple.png", px, py)
+                companion_name, companion_image = "Mepple", "mepple.png"
+            else:
+                self.player = Fairy("Mepple", "mepple.png", px, py)
+                companion_name, companion_image = "Mipple", "mipple.png"
+            cdata = data.get("companion") or {}
+            self.companion = PartyFairy(companion_name, companion_image, float(cdata.get("x", px - 80)), float(cdata.get("y", py)))
+            self.selected_character = character
+            self.coins = int(data.get("coins", 0))
+
+            for i, value in enumerate(data.get("flowers", [])):
+                if i < len(self.flowers): self.flowers[i].collected = bool(value)
+            for i, value in enumerate(data.get("quest_items", [])):
+                if i < len(self.quest_items): self.quest_items[i].collected = bool(value)
+
+            npc_by_name = {n.name: n for n in self.npcs}
+            for saved in data.get("npcs", []):
+                npc = npc_by_name.get(saved.get("name"))
+                if npc:
+                    npc.x = float(saved.get("x", npc.x)); npc.y = float(saved.get("y", npc.y)); npc.sync_rect(); npc.target_x = npc.x; npc.target_y = npc.y
+
+            quest_by_id = {q.quest_id: q for q in self.quests}
+            for saved in data.get("quests", []):
+                q = quest_by_id.get(saved.get("quest_id"))
+                if not q: continue
+                q.progress = min(int(saved.get("progress", 0)), q.required_amount)
+                q.accepted = bool(saved.get("accepted", False)); q.completed = bool(saved.get("completed", False)); q.reward_claimed = bool(saved.get("reward_claimed", False)); q.visited_targets = set(saved.get("visited_targets", []))
+
+            nav = data.get("navigator", {})
+            self.navigator_enabled = bool(nav.get("enabled", False)); self.navigator_quest_id = nav.get("quest_id"); self.navigator_quest_index = 0
+            if self.navigator_quest_id:
+                for index, q in enumerate(self.get_active_quests()):
+                    if q.quest_id == self.navigator_quest_id:
+                        self.navigator_quest_index = index; break
+                else:
+                    self.navigator_enabled = False; self.navigator_quest_id = None
+
+            self.pending_quest = None; self.quest_offer_ready = False; self.dialogue_npc = None; self.dialogue_lines = []; self.dialogue_index = 0; self.selected_quest = None
+            self.state = "playing"
+            self.camera.update(self.player.rect)
+            self.show_notification("Game loaded successfully!")
+            print("[SAVE] Game loaded successfully.")
+            return True
+        except (TypeError, ValueError, KeyError) as exc:
+            print(f"[SAVE] Invalid save data: {exc}")
+            self.show_notification("The save game could not be loaded.")
+            return False
+
+    def start_new_adventure(self, character):
+        self.obstacles = []; self.flowers = []; self.quest_items = []; self.quest_locations = []; self.npcs = []; self.quests = []
+        self.generate_world(); self.create_quests()
+        self.coins = 0; self.navigator_enabled = False; self.navigator_quest_id = None; self.navigator_quest_index = 0
+        self.start_adventure(character)
+
     def start_adventure(
         self,
         character
     ):
 
         self.selected_character = character
+        self.navigator_enabled = False
+        self.navigator_quest_id = None
+        self.navigator_quest_index = 0
+        self.selected_quest = None
 
         x, y = self.find_safe_spawn()
 
@@ -6838,13 +7362,13 @@ class Game:
 
                 elif event.key == pygame.K_1:
 
-                    self.start_adventure(
+                    self.start_new_adventure(
                         "Mepple"
                     )
 
                 elif event.key == pygame.K_2:
 
-                    self.start_adventure(
+                    self.start_new_adventure(
                         "Mipple"
                     )
 
@@ -7086,8 +7610,23 @@ class Game:
             if event.type == pygame.KEYDOWN:
 
                 if event.key == pygame.K_ESCAPE:
-
                     self.state = "playing"
+                elif event.key == pygame.K_s:
+                    self.save_game()
+                elif event.key == pygame.K_m:
+                    self.save_game()
+                    self.state = "main_menu"
+                    self.refresh_main_menu_options()
+
+            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                if self.get_pause_resume_rect().collidepoint(event.pos):
+                    self.state = "playing"
+                elif self.get_pause_save_rect().collidepoint(event.pos):
+                    self.save_game()
+                elif self.get_pause_menu_rect().collidepoint(event.pos):
+                    self.save_game()
+                    self.state = "main_menu"
+                    self.refresh_main_menu_options()
 
     # ============================================================
     # MAIN MENU EVENTS
@@ -7200,14 +7739,13 @@ class Game:
             self.main_menu_selected
         )
 
-        if selected == 0:
+        option = self.main_menu_options[selected]
 
-            # Start Adventure.
+        if option == "CONTINUE":
+            self.load_game()
+        elif option == "START ADVENTURE":
             self.state = "character_select"
-
-        elif selected == 1:
-
-            # Quit Game.
+        elif option == "QUIT GAME":
             self.running = False
 
     # ============================================================
@@ -9797,71 +10335,34 @@ class Game:
     # PAUSE
     # ============================================================
 
+    def get_pause_resume_rect(self):
+        return pygame.Rect(SCREEN_WIDTH // 2 - 210, 300, 420, 55)
+
+    def get_pause_save_rect(self):
+        return pygame.Rect(SCREEN_WIDTH // 2 - 210, 370, 420, 55)
+
+    def get_pause_menu_rect(self):
+        return pygame.Rect(SCREEN_WIDTH // 2 - 210, 440, 420, 55)
+
     def draw_pause(self):
 
-        overlay = pygame.Surface(
-            (
-                SCREEN_WIDTH,
-                SCREEN_HEIGHT
-            ),
-            pygame.SRCALPHA
-        )
-
-        overlay.fill(
-            (0, 0, 0, 150)
-        )
-
-        self.screen.blit(
-            overlay,
-            (0, 0)
-        )
-
-        title = self.title_font.render(
-            "PAUSED",
-            True,
-            (255, 255, 255)
-        )
-
-        title_rect = title.get_rect(
-            center=(
-                SCREEN_WIDTH // 2,
-                230
-            )
-        )
-
-        self.screen.blit(
-            title,
-            title_rect
-        )
-
-        instructions = [
-            "ESC  Resume",
-            "Q    Quest Log"
-        ]
-
-        y = 300
-
-        for text in instructions:
-
-            surface = self.font.render(
-                text,
-                True,
-                (235, 235, 245)
-            )
-
-            rect = surface.get_rect(
-                center=(
-                    SCREEN_WIDTH // 2,
-                    y
-                )
-            )
-
-            self.screen.blit(
-                surface,
-                rect
-            )
-
-            y += 45
+        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 165))
+        self.screen.blit(overlay, (0, 0))
+        title = self.title_font.render("PAUSED", True, (255, 255, 255))
+        self.screen.blit(title, title.get_rect(center=(SCREEN_WIDTH // 2, 220)))
+        buttons = [(self.get_pause_resume_rect(), "RESUME", "ESC"), (self.get_pause_save_rect(), "SAVE GAME", "S"), (self.get_pause_menu_rect(), "SAVE & MAIN MENU", "M")]
+        mouse_pos = pygame.mouse.get_pos()
+        for rect, label, key in buttons:
+            hovered = rect.collidepoint(mouse_pos)
+            bg = (125, 95, 165) if hovered else (70, 55, 95)
+            border = (255, 225, 140) if hovered else (160, 140, 190)
+            pygame.draw.rect(self.screen, bg, rect, border_radius=14)
+            pygame.draw.rect(self.screen, border, rect, 2, border_radius=14)
+            text = self.font.render(f"{label}   [{key}]", True, (255, 255, 255))
+            self.screen.blit(text, text.get_rect(center=rect.center))
+        hint = self.small_font.render("ESC Resume    S Save Game    M Save & Main Menu", True, (225, 215, 240))
+        self.screen.blit(hint, hint.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT - 35)))
 
     # ============================================================
     # CHARACTER SELECT
